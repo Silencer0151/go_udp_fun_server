@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.5.0
+// Version: 0.5.5
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -31,7 +31,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.5.0"
+	SERVER_VERSION = "GUFS v0.5.5"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -188,7 +188,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.5.0) ---
+--- GUFS Help (v0.5.5) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -613,15 +613,29 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 
 // This function runs forever, cleaning up clients that have timed out.
 func cleanupDeadClients() {
-	const timeout = 60 * time.Second // e.g., a 60-second timeout
-	// Run this check every 30 seconds
+	const timeout = 60 * time.Second
 	for {
 		time.Sleep(30 * time.Second)
 
 		clientsMutex.Lock()
 		for addrStr, client := range clients {
 			if time.Since(client.LastHeartbeat) > timeout {
-				fmt.Printf("Client %s timed out. Removing.\n", addrStr)
+				// Announce user disconnect if they had a username
+				if client.Username != "" {
+					disconnectMsg := fmt.Sprintf("User '%s' has disconnected.", client.Username)
+					fmt.Printf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
+
+					// Notify other clients
+					for otherAddr, otherClient := range clients {
+						if otherAddr != addrStr && otherClient.IsConnected {
+							// We need the conn here, but cleanupDeadClients doesn't have it
+							// we might want to pass it as a parameter or use a different approach
+							fmt.Printf("placeholder, pass connection to this function: %s", disconnectMsg)
+						}
+					}
+				} else {
+					fmt.Printf("Client %s timed out. Removing.\n", addrStr)
+				}
 				delete(clients, addrStr)
 			}
 		}
