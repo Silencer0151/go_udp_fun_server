@@ -33,48 +33,35 @@ import (
 const (
 	SERVER_VERSION = "GUFS v0.5.0"
 
-	// Command: 0x01 - File Transfer
-	CMD_FILE_TRANSFER byte = 0x01
-
-	// Command: 0x02 - Broadcast Message
-	CMD_BROADCAST byte = 0x02
-
-	// Command: 0x03 - Get Server Status
-	CMD_STATUS byte = 0x03
-
-	// Command: 0x04 - Custom Data Processing (reverse in this case)
+	// General Commands
+	CMD_BROADCAST    byte = 0x02
+	CMD_STATUS       byte = 0x03
 	CMD_PROCESS_DATA byte = 0x04
-
-	// Command: 0x05 - Get Server Time
-	CMD_TIME byte = 0x05
-
-	// Command: 0x06 - Set Client Username
+	CMD_TIME         byte = 0x05
 	CMD_SET_USERNAME byte = 0x06
+	CMD_ECHO         byte = 0x07
 
-	// Command: 0x07 - Echo data back to client
-	CMD_ECHO byte = 0x07
-
-	// Protocol: commands designed to establish and maintain a "connection"
-	CMD_CONNECT_SYN     byte = 0x10 //client request
-	CMD_CONNECT_SYN_ACK byte = 0x11 //server acknowledgement
-	CMD_CONNECT_ACK     byte = 0x12 // client confirmation
+	// Connection Protocol
+	CMD_CONNECT_SYN     byte = 0x10
+	CMD_CONNECT_SYN_ACK byte = 0x11
+	CMD_CONNECT_ACK     byte = 0x12
 	CMD_HEARTBEAT       byte = 0x13
 
-	// Database: commands for database storage and retrieval
+	// Database Commands
 	CMD_DB_STORE    byte = 0x20
 	CMD_DB_RETRIEVE byte = 0x21
 	CMD_DB_LIST     byte = 0x22
 
-	// metadata: commands for displaying server information
+	// Metadata Commands
 	CMD_VERSION byte = 0x30
 	CMD_HELP    byte = 0x31
 
-	// file-transfer: mini protocol for file transfer safety
-	CMD_FILE_START byte = 0x40 // Client -> Server: Announce upload
-	CMD_FILE_CHUNK byte = 0x41 // Data chunk packet
-	CMD_FILE_ACK   byte = 0x42 // Server -> Client: Acknowledge chunk
-	CMD_FILE_GET   byte = 0x43 // Client -> Server: Request a download
-	CMD_FILE_LIST  byte = 0x44 // Client -> Server: Request list of available files
+	// File Transfer Protocol
+	CMD_FILE_START byte = 0x40
+	CMD_FILE_CHUNK byte = 0x41
+	CMD_FILE_ACK   byte = 0x42
+	CMD_FILE_GET   byte = 0x43
+	CMD_FILE_LIST  byte = 0x44
 )
 
 // database global variables and map
