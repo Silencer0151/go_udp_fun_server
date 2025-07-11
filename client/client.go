@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"os"
@@ -317,7 +316,7 @@ func (c *Client) sendFile(filePath string) {
 	c.transferLock.Lock()
 	defer c.transferLock.Unlock()
 
-	fileData, err := ioutil.ReadFile(filePath)
+	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		fmt.Printf("\rError reading file: %v\n> ", err)
 		return
