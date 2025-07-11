@@ -107,7 +107,7 @@ Hello everyone!
 go_udp_fun_server/
 ├── server.go              # Main server implementation
 ├── client/
-    ├── downloads/         # Client download directory (created automatically)
+|   ├── downloads/         # Client download directory (created automatically)
 │   └── client.go          # Interactive client implementation
 ├── test/
 │   └── test_suite.go      # Comprehensive test suite
