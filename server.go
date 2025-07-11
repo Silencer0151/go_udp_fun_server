@@ -256,16 +256,47 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		conn.WriteToUDP([]byte(serverTime), addr)
 
 	case CMD_SET_USERNAME:
-		// We now fetch the existing client, modify it, and put it back.
-		username := string(payload)
+		username := strings.TrimSpace(string(payload))
+
+		// Basic validation
+		if username == "" {
+			conn.WriteToUDP([]byte("Error: Username cannot be empty."), addr)
+			return
+		}
+
+		if len(username) > 50 { // Add reasonable length limit
+			conn.WriteToUDP([]byte("Error: Username too long (max 50 characters)."), addr)
+			return
+		}
+
 		clientsMutex.Lock()
+		defer clientsMutex.Unlock()
+
+		// Check if username is already taken
+		if isUsernameTaken(username, addrStr) {
+			conn.WriteToUDP([]byte("Error: Username '"+username+"' is already taken. Please choose another."), addr)
+			return
+		}
+
+		// Get current client and update username
 		if client, ok := clients[addrStr]; ok {
+			oldUsername := client.Username
 			client.Username = username
-			clients[addrStr] = client // Re-assign the modified struct
+			clients[addrStr] = client
+
 			fmt.Printf("Set username for %s to '%s'\n", addr, username)
 			conn.WriteToUDP([]byte("Username set successfully!"), addr)
+
+			// Optional: Broadcast username change to other clients
+			if oldUsername != "" && oldUsername != username {
+				changeMsg := fmt.Sprintf("User '%s' changed their name to '%s'", oldUsername, username)
+				for clientAddr, otherClient := range clients {
+					if clientAddr != addrStr && otherClient.IsConnected {
+						conn.WriteToUDP([]byte(changeMsg), otherClient.Addr)
+					}
+				}
+			}
 		}
-		clientsMutex.Unlock()
 
 	case CMD_STATUS:
 		uptime := time.Since(serverStartTime).Round(time.Second)
@@ -630,4 +661,14 @@ func assembleFile(transfer *FileTransfer) {
 	}
 
 	fmt.Printf("✅ Successfully assembled and saved file: %s\n", filePath)
+}
+
+// checks if username already exists
+func isUsernameTaken(username string, excludeAddr string) bool {
+	for addrStr, client := range clients {
+		if addrStr != excludeAddr && client.IsConnected && client.Username == username {
+			return true
+		}
+	}
+	return false
 }
