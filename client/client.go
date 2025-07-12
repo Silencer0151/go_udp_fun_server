@@ -29,6 +29,7 @@ const (
 	CMD_CONNECT_SYN_ACK byte = 0x11
 	CMD_CONNECT_ACK     byte = 0x12
 	CMD_HEARTBEAT       byte = 0x13
+	CMD_DISCONNECT      byte = 0x14
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -233,6 +234,8 @@ func (c *Client) handleUserInput() {
 
 			switch command {
 			case "/quit":
+				c.sendCommand(CMD_DISCONNECT, nil)
+				time.Sleep(50 * time.Millisecond)
 				close(c.quitChan)
 				return
 			case "/help":

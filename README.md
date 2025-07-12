@@ -146,6 +146,7 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x11` | CONNECT_SYN_ACK | None | Server connection response |
 | `0x12` | CONNECT_ACK | None | Client connection confirmation |
 | `0x13` | HEARTBEAT | None | Keep connection alive |
+| `0x14` | DISCONNECT | None | Disconnect from server |
 | `0x20` | DB_STORE | `string(key=value)` | Store key-value pair |
 | `0x21` | DB_RETRIEVE | `string(key)` | Retrieve value by key |
 | `0x22` | DB_LIST | None | List all database keys |

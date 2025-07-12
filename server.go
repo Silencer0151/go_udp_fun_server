@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.5.5
+// Version: 0.6.0
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -31,7 +31,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.5.5"
+	SERVER_VERSION = "GUFS v0.6.0"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -46,6 +46,7 @@ const (
 	CMD_CONNECT_SYN_ACK byte = 0x11
 	CMD_CONNECT_ACK     byte = 0x12
 	CMD_HEARTBEAT       byte = 0x13
+	CMD_DISCONNECT      byte = 0x14
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -119,7 +120,7 @@ func main() {
 	fmt.Printf("UDP server listening on %s\n", conn.LocalAddr().String())
 
 	// Start the client cleanup goroutine
-	go cleanupDeadClients()
+	go cleanupDeadClients(conn)
 
 	buffer := make([]byte, 8192)
 	for {
@@ -188,7 +189,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.5.5) ---
+--- GUFS Help (v0.6.0) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -556,10 +557,41 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		}
 		clientsMutex.Unlock()
 
+	case CMD_DISCONNECT:
+		clientsMutex.Lock()
+		// First, find the client to get their username before they are removed.
+		client, ok := clients[addrStr]
+		if !ok {
+			// If the client isn't in our map for some reason, just unlock and do nothing.
+			clientsMutex.Unlock()
+			return
+		}
+		// Store the username for the broadcast message.
+		disconnectedUsername := client.Username
+		if disconnectedUsername == "" {
+			disconnectedUsername = "An unnamed user" // Fallback for users without a name
+		}
+
+		// Remove the client from the map. This is the core of the disconnect.
+		delete(clients, addrStr)
+		fmt.Printf("Client %s (%s) has disconnected.\n", disconnectedUsername, addrStr)
+
+		// Prepare the broadcast message to notify other users.
+		disconnectMsg := fmt.Sprintf("[Server]: %s has disconnected.", disconnectedUsername)
+
+		// Loop through all *remaining* connected clients to notify them.
+		for _, otherClient := range clients {
+			// No need to check for the sender, as they've already been deleted.
+			if otherClient.IsConnected {
+				conn.WriteToUDP([]byte(disconnectMsg), otherClient.Addr)
+			}
+		}
+		clientsMutex.Unlock()
+
 	default:
 		errMsg := fmt.Sprintf("Unknown command byte: 0x%x. Type 'help' for more information.", command)
 		conn.WriteToUDP([]byte(errMsg), addr)
-		fmt.Printf("received unknown packet from client: %s\n", addrStr)
+		fmt.Printf("received unknown packet from client: %s - 0x%x\n", addrStr, command)
 	}
 }
 
@@ -612,7 +644,7 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 }
 
 // This function runs forever, cleaning up clients that have timed out.
-func cleanupDeadClients() {
+func cleanupDeadClients(conn *net.UDPConn) {
 	const timeout = 60 * time.Second
 	for {
 		time.Sleep(30 * time.Second)
@@ -622,7 +654,7 @@ func cleanupDeadClients() {
 			if time.Since(client.LastHeartbeat) > timeout {
 				// Announce user disconnect if they had a username
 				if client.Username != "" {
-					disconnectMsg := fmt.Sprintf("User '%s' has disconnected.", client.Username)
+					disconnectMsg := fmt.Sprintf("User '%s' has disconnected or timed out.", client.Username)
 					fmt.Printf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
 
 					// Notify other clients
@@ -630,7 +662,8 @@ func cleanupDeadClients() {
 						if otherAddr != addrStr && otherClient.IsConnected {
 							// We need the conn here, but cleanupDeadClients doesn't have it
 							// we might want to pass it as a parameter or use a different approach
-							fmt.Printf("placeholder, pass connection to this function: %s", disconnectMsg)
+							conn.WriteToUDP([]byte(disconnectMsg), otherClient.Addr)
+							fmt.Printf("%s", disconnectMsg)
 						}
 					}
 				} else {
