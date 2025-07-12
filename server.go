@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.6.0
+// Version: 0.6.5
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -14,6 +14,19 @@
 // - A 3-way handshake (SYN, SYN-ACK, ACK) is required to establish a session.
 // - Heartbeats are used to maintain sessions and clean up inactive clients.
 // - See the getHelpText() function for a full command list.
+
+/*
+	-- TODO LIST --
+	- Implement Sliding Window:
+		Current Method (Stop-and-Wait): Send chunk 0 -> Wait for ACK 0 -> Send chunk 1 -> Wait for ACK 1...
+		New Method (Sliding Window): Send chunks 0, 1, 2, 3, 4, 5 all at once. As ACKs for 0, 1, 2 come back, send chunks 6, 7, 8.
+
+	- List Online users /users command
+	- Private messaging /msg username message
+	- File deletion /delete filename
+	- Ping and latency management /ping
+	- Message history
+*/
 
 package main
 
@@ -31,7 +44,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.6.0"
+	SERVER_VERSION = "GUFS v0.6.5"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -58,11 +71,12 @@ const (
 	CMD_HELP    byte = 0x31
 
 	// File Transfer Protocol
-	CMD_FILE_START byte = 0x40
-	CMD_FILE_CHUNK byte = 0x41
-	CMD_FILE_ACK   byte = 0x42
-	CMD_FILE_GET   byte = 0x43
-	CMD_FILE_LIST  byte = 0x44
+	CMD_FILE_START          byte = 0x40
+	CMD_FILE_CHUNK          byte = 0x41
+	CMD_FILE_ACK            byte = 0x42
+	CMD_FILE_GET            byte = 0x43
+	CMD_FILE_LIST           byte = 0x44
+	CMD_FILE_REQUEST_CHUNKS byte = 0x45
 )
 
 // database global variables and map
@@ -189,7 +203,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.6.0) ---
+--- GUFS Help (v0.6.5) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -497,6 +511,10 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		binary.BigEndian.PutUint32(ackPacket[1:5], sequenceNumber)
 		conn.WriteToUDP(ackPacket, addr)
 
+	case CMD_FILE_REQUEST_CHUNKS:
+		filename := string(payload) // assume payload is just the filename
+		go resendMissingChunks(conn, addr, filename, payload)
+
 	case CMD_FILE_LIST:
 		files, err := os.ReadDir("./uploads")
 		if err != nil {
@@ -663,8 +681,6 @@ func cleanupDeadClients(conn *net.UDPConn) {
 					// Notify other clients
 					for otherAddr, otherClient := range clients {
 						if otherAddr != addrStr && otherClient.IsConnected {
-							// We need the conn here, but cleanupDeadClients doesn't have it
-							// we might want to pass it as a parameter or use a different approach
 							conn.WriteToUDP([]byte(disconnectMsg), otherClient.Addr)
 							fmt.Printf("%s", disconnectMsg)
 						}
@@ -711,6 +727,44 @@ func assembleFile(transfer *FileTransfer) {
 	}
 
 	fmt.Printf("✅ Successfully assembled and saved file: %s\n", filePath)
+}
+
+func resendMissingChunks(conn *net.UDPConn, addr *net.UDPAddr, filename string, missingChunksPayload []byte) {
+	const chunkSize = 1024
+	filePath := "./uploads/" + filename
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		// Can't do much if the file is gone, so we just log and exit.
+		fmt.Printf("Could not re-read file %s for re-sending chunks.\n", filename)
+		return
+	}
+
+	// The payload contains a list of 4-byte sequence numbers
+	for i := 0; i < len(missingChunksPayload); i += 4 {
+		if i+4 > len(missingChunksPayload) {
+			break
+		}
+		seqNum := binary.BigEndian.Uint32(missingChunksPayload[i : i+4])
+
+		start := int(seqNum) * chunkSize
+		end := start + chunkSize
+		if start > len(fileData) {
+			continue // Invalid sequence number requested
+		}
+		if end > len(fileData) {
+			end = len(fileData)
+		}
+		chunkData := fileData[start:end]
+
+		// Re-send the chunk packet
+		packet := make([]byte, 1+4+len(chunkData))
+		packet[0] = CMD_FILE_CHUNK
+		binary.BigEndian.PutUint32(packet[1:5], seqNum)
+		copy(packet[5:], chunkData)
+
+		conn.WriteToUDP(packet, addr)
+		time.Sleep(5 * time.Millisecond) // Small delay for the os
+	}
 }
 
 // checks if username already exists

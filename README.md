@@ -16,7 +16,7 @@
 ### Communication Features
 - **Real-time Broadcasting**: Multi-client messaging system
 - **Direct Messaging**: Echo and data processing commands
-- **Username Management**: Configurable client identities
+- **Username Management**: Configurable client identities and broadcast of name changes.
 
 ### Data Storage
 - **In-Memory Database**: Key-value storage with size limits
@@ -25,8 +25,8 @@
 
 ### File Transfer
 - **Chunked Upload/Download**: Reliable file transfer with acknowledgments
-- **Resume Capability**: Handles packet loss with retry mechanisms
-- **Transfer Management**: Unique session IDs for concurrent transfers
+- **Resume Capability**: Handles packet loss with selective chunk re-requesting.
+- **Transfer Management**: Unique session IDs for concurrent uploads.
 
 ## 📋 Requirements
 
@@ -65,7 +65,7 @@ go build -o gufs-client client.go
 
 ### Connecting with the Client
 ```bash
-# Default connection
+# Default connection (auto-generated username)
 ./gufs-client
 
 # Custom server and username
@@ -96,6 +96,12 @@ Hello everyone!
 
 # Download a file
 /get filename.txt
+
+# List all database keys
+/list
+
+# List available files on the server
+/listfiles
 
 # Get help
 /help
@@ -157,6 +163,7 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x42` | FILE_ACK | `[4B sequence]` | Acknowledge chunk receipt |
 | `0x43` | FILE_GET | `string(filename)` | Request file download |
 | `0x44` | FILE_LIST | None | List available files |
+| `0x45` | FILE_REQUEST_CHUNKS | [filename][4B seq1][4B seq2]... | Client requests specific missing chunks. |
 
 ### File Transfer Protocol
 
@@ -174,7 +181,9 @@ The file transfer system uses a reliable chunked approach:
    ```
    Client → Server: FILE_GET [filename]
    Server → Client: FILE_START [totalChunks][filename]
-   Server → Client: FILE_CHUNK [seqNum][data] (repeat)
+   Server → Client: FILE_CHUNK [seqNum][data] (repeat for each chunk)
+   Client → Server: FILE_REQUEST_CHUNKS [filename][missingSeq1]... (if chunks are missing after timeout)
+   Server → Client: FILE_CHUNK [missingSeqNum][data] (re-sends only requested chunks)
    ```
 
 3. **Features**:
@@ -245,7 +254,7 @@ Testing: Set Username to 'TestClient1'
 
 2. **File Upload Timeout**
    ```bash
-   Timeout waiting for ACK on chunk 0
+   Timeout waiting for ACK on chunk 0. Retrying...
    ```
    - Check network connectivity
    - Verify file permissions
