@@ -223,12 +223,13 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	if len(data) == 0 {
 		return
 	}
-	if string(data) == "help" {
-		conn.WriteToUDP([]byte(getHelpText()), addr)
+	if string(data) == "help\n" {
+		//conn.WriteToUDP([]byte(getHelpText()), addr)
+		conn.WriteToUDP([]byte(getProtocolText()), addr)
 		return
 	}
 	// For netcat users wanting protocol details
-	if string(data) == "protocol" {
+	if string(data) == "protocol\n" {
 		conn.WriteToUDP([]byte(getProtocolText()), addr)
 		return
 	}
@@ -246,7 +247,9 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 	// If the command is not a connection command and the client is not connected, reject it.
 	if !isConnectCmd && (!isKnown || !client.IsConnected) {
-		fmt.Printf("Rejected command from unconnected client %s\n", addr)
+		conn.WriteToUDP([]byte("The server did not understand your request, try 'protocol' for more information."), addr)
+
+		fmt.Printf("Rejected command from unconnected client %s - '%s'\n", addr, string(data))
 		return
 	}
 
