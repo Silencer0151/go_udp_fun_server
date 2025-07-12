@@ -140,7 +140,7 @@ func getProtocolText() string {
 	return `
 --- GUFS Raw Byte Protocol ---
 This server communicates via a binary protocol. Packets must start with a 1-byte command.
-Payload formats are specified below. Full documentation: https://github.com/yourusername/go_udp_fun_server
+Payload formats are specified below. Full documentation: https://github.com/Silencer0151/go_udp_fun_server
 
 [Connection]
 1. Client sends [0x10] (CMD_CONNECT_SYN)
