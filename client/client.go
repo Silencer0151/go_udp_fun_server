@@ -47,6 +47,7 @@ const (
 	CMD_FILE_GET            byte = 0x43
 	CMD_FILE_LIST           byte = 0x44
 	CMD_FILE_REQUEST_CHUNKS byte = 0x45
+	CMD_FILE_DOWNLOAD_ACK   byte = 0x46
 )
 
 const (
@@ -320,6 +321,17 @@ func (c *Client) sendFile(filePath string) {
 	c.transferLock.Lock()
 	defer c.transferLock.Unlock()
 
+	windowSize := 32 // The number of chunks we can have "in-flight" at once.
+	windowStart := 0 // The beginning of our sending window.
+	windowEnd := 0   // The end of our sending window.
+
+	// A map to track which chunks have been successfully acknowledged.
+	ackedChunks := make(map[int]bool)
+	var ackedMutex sync.Mutex // To protect the ackedChunks map
+
+	// A channel to signal when the upload is complete or has failed.
+	doneChan := make(chan error)
+
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		fmt.Printf("\rError reading file: %v\n> ", err)
@@ -341,37 +353,62 @@ func (c *Client) sendFile(filePath string) {
 
 	fmt.Printf("\rUploading '%s' (%d chunks) with ID: %s\n> ", filename, totalChunks, transferID)
 
-	for i := 0; i < totalChunks; i++ {
-		start := i * CHUNK_SIZE
-		end := start + CHUNK_SIZE
-		if end > len(fileData) {
-			end = len(fileData)
-		}
-
-		chunkPayload := make([]byte, 4+1+len(transferID))
-		binary.BigEndian.PutUint32(chunkPayload[0:4], uint32(i))
-		chunkPayload[4] = byte(len(transferID))
-		copy(chunkPayload[5:], []byte(transferID))
-		chunkPayload = append(chunkPayload, fileData[start:end]...)
-
-		for retries := 0; retries < 3; retries++ {
-			c.sendCommand(CMD_FILE_CHUNK, chunkPayload)
+	go func() {
+		for i := 0; i < totalChunks; i++ {
 			select {
 			case ackNum := <-c.ackChan:
-				if ackNum == uint32(i) {
-					goto nextChunk
-				}
-			case <-time.After(2 * time.Second):
-				fmt.Printf("\rTimeout waiting for ACK on chunk %d. Retrying...\n> ", i)
+				ackedMutex.Lock()
+				ackedChunks[int(ackNum)] = true
+				ackedMutex.Unlock()
+			case <-time.After(10 * time.Second): // Timeout if no ACKs are received at all
+				doneChan <- fmt.Errorf("upload timed out")
+				return
 			}
 		}
-		fmt.Printf("\rFailed to upload chunk %d after 3 retries. Aborting.\n> ", i)
-		return
+		doneChan <- nil // Success
+	}()
 
-	nextChunk:
-		fmt.Printf("\rUploading... %d%%", (i+1)*100/totalChunks)
+	for windowStart < totalChunks {
+		// Send all packets within the current window that haven't been sent yet.
+		for windowEnd < totalChunks && windowEnd-windowStart < windowSize {
+			// Construct and send the chunk packet for windowEnd
+			start := windowEnd * CHUNK_SIZE
+			end := start + CHUNK_SIZE
+			if end > len(fileData) {
+				end = len(fileData)
+			}
+
+			chunkPayload := make([]byte, 4+1+len(transferID))
+			binary.BigEndian.PutUint32(chunkPayload[0:4], uint32(windowEnd))
+			chunkPayload[4] = byte(len(transferID))
+			copy(chunkPayload[5:], []byte(transferID))
+			chunkPayload = append(chunkPayload, fileData[start:end]...)
+
+			c.sendCommand(CMD_FILE_CHUNK, chunkPayload)
+			windowEnd++
+		}
+
+		// Slide the window forward based on the ACKs we've received.
+		ackedMutex.Lock()
+		for ackedChunks[windowStart] {
+			delete(ackedChunks, windowStart) // Clean up map
+			windowStart++
+			fmt.Printf("\rUploading... %d%%", (windowStart*100)/totalChunks)
+		}
+		ackedMutex.Unlock()
+
+		// A small sleep to prevent the loop from busy-waiting and flooding the network.
+		time.Sleep(10 * time.Millisecond)
 	}
-	fmt.Printf("\rUpload complete for '%s'.\n> ", filename)
+
+	// Final check
+	err = <-doneChan
+	if err != nil {
+		fmt.Printf("\rUpload failed: %v\n> ", err)
+	} else {
+		fmt.Printf("\rUpload complete for '%s'.\n> ", filename)
+	}
+	//fmt.Printf("\rUpload complete for '%s'.\n> ", filename)
 }
 
 func (c *Client) receiveFile(startPayload []byte) {
@@ -388,7 +425,7 @@ func (c *Client) receiveFile(startPayload []byte) {
 
 	download := &FileDownload{
 		TotalChunks: totalChunks,
-		Chunks:      make(chan []byte, 200), // Larger buffer for incoming chunks
+		Chunks:      make(chan []byte, 200),
 	}
 	c.downloadMutex.Lock()
 	c.activeDownloads[filename] = download
@@ -403,9 +440,7 @@ func (c *Client) receiveFile(startPayload []byte) {
 	receivedChunks := make([][]byte, totalChunks)
 	var receivedCount uint32 = 0
 
-	// Phase 1: Initial reception loop
-	// Wait for a period of time for the server to send all chunks.
-	// We'll wait 2 seconds after the last received chunk.
+	// Phase 1: Initial reception loop. Wait for the initial burst of packets.
 	lastChunkTime := time.Now()
 	for time.Since(lastChunkTime) < 2*time.Second && receivedCount < totalChunks {
 		select {
@@ -425,27 +460,32 @@ func (c *Client) receiveFile(startPayload []byte) {
 		}
 	}
 
-	// Phase 2: Selective Repeat - Check for and request missing chunks
+	// Phase 2: Check for missing chunks and request them up to 3 times.
 	for retries := 0; retries < 3 && receivedCount < totalChunks; retries++ {
-		var missing []byte
+		var missingPayload []byte
 		for i := uint32(0); i < totalChunks; i++ {
 			if receivedChunks[i] == nil {
 				missingSeq := make([]byte, 4)
 				binary.BigEndian.PutUint32(missingSeq, i)
-				missing = append(missing, missingSeq...)
+				missingPayload = append(missingPayload, missingSeq...)
 			}
 		}
 
-		if len(missing) == 0 {
+		if len(missingPayload) == 0 {
 			break // All chunks received
 		}
 
-		fmt.Printf("\rRequesting %d missing chunks (attempt %d/3)...\n> ", len(missing)/4, retries+1)
-		// We need to tell the server which file we're talking about
-		requestPayload := append([]byte(filename), missing...)
+		fmt.Printf("\rRequesting %d missing chunks (attempt %d/3)...\n> ", len(missingPayload)/4, retries+1)
+
+		// Construct the request: [filename_len (1 byte)][filename][missing_chunks_data]
+		requestPayload := make([]byte, 1+len(filename))
+		requestPayload[0] = byte(len(filename))
+		copy(requestPayload[1:], []byte(filename))
+		requestPayload = append(requestPayload, missingPayload...)
+
 		c.sendCommand(CMD_FILE_REQUEST_CHUNKS, requestPayload)
 
-		// Create a short listening window for the missing chunks
+		// Create a short listening window for the re-sent chunks
 		listenEndTime := time.Now().Add(3 * time.Second)
 		for time.Now().Before(listenEndTime) && receivedCount < totalChunks {
 			select {
@@ -465,9 +505,10 @@ func (c *Client) receiveFile(startPayload []byte) {
 		}
 	}
 
-	// Phase 3: Final Assembly
+	// Phase 3: Final Assembly and Status Report
 	if receivedCount < totalChunks {
-		fmt.Printf("\rDownload for '%s' failed. Missing %d chunks. Incomplete file saved.\n> ", filename, totalChunks-receivedCount)
+		fmt.Printf("\rDownload for '%s' failed. Missing %d chunks. File is corrupt.\n> ", filename, totalChunks-receivedCount)
+		// We still save the incomplete file for debugging, but the message is clear.
 	} else {
 		fmt.Printf("\rDownload complete for '%s'. Assembling file...\n> ", filename)
 	}
@@ -479,6 +520,7 @@ func (c *Client) receiveFile(startPayload []byte) {
 	}
 	defer file.Close()
 
+	// Write all received chunks (even if incomplete)
 	for i := uint32(0); i < totalChunks; i++ {
 		if receivedChunks[i] != nil {
 			if _, err := file.Write(receivedChunks[i]); err != nil {
@@ -487,7 +529,10 @@ func (c *Client) receiveFile(startPayload []byte) {
 			}
 		}
 	}
-	fmt.Printf("\rSuccessfully saved file to %s\n> ", filePath)
+
+	if receivedCount == totalChunks {
+		fmt.Printf("\rSuccessfully saved file to %s\n> ", filePath)
+	}
 }
 
 // sendAndReceive is a robust helper for commands that expect a direct response.
