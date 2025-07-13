@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.6.5
+// Version: 0.6.7
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -44,7 +44,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.6.5"
+	SERVER_VERSION = "GUFS v0.6.7"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -204,7 +204,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.6.5) ---
+--- GUFS Help (v0.6.7) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
