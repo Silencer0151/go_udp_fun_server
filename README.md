@@ -114,14 +114,17 @@ Hello everyone!
 
 ```
 go_udp_fun_server/
+|── build/                 # Where executables go
 ├── server.go              # Main server implementation
+├── build.bat              # Windows build script
 ├── client/
 |   ├── downloads/         # Client download directory (created automatically)
 │   └── client.go          # Interactive client implementation
 ├── test/
-│   └── test_suite.go      # Comprehensive test suite
+│   ├── test_suite.go      # Comprehensive test suite
+│   └── pycat.py           # Simple Python netcat clone for testing against server
 ├── uploads/               # Server file storage (created automatically)
-└── README.md             # This file
+└── README.md              # This file
 ```
 
 ## 🔌 Protocol Documentation
