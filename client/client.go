@@ -23,6 +23,7 @@ const (
 	CMD_TIME         byte = 0x05
 	CMD_SET_USERNAME byte = 0x06
 	CMD_ECHO         byte = 0x07
+	CMD_LIST_USERS   byte = 0x08
 
 	// Connection Protocol
 	CMD_CONNECT_SYN     byte = 0x10
@@ -76,7 +77,7 @@ type FileDownload struct {
 }
 
 func generateUsername() string {
-	rand.Seed(time.Now().UnixNano())
+	//rand.Seed(time.Now().UnixNano())
 	randomNumber := rand.Intn(10000)
 	return fmt.Sprintf("user%04d", randomNumber)
 }
@@ -255,6 +256,8 @@ func (c *Client) handleUserInput() {
 				} else {
 					fmt.Println("Usage: /username <new_name>")
 				}
+			case "/users":
+				c.sendCommand(CMD_LIST_USERS, []byte(strings.Join(args, " ")))
 			case "/echo":
 				c.sendCommand(CMD_ECHO, []byte(strings.Join(args, " ")))
 			case "/reverse":

@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.6.7
+// Version: 0.7.0
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -44,7 +44,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.6.7"
+	SERVER_VERSION = "GUFS v0.7.0"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -53,6 +53,7 @@ const (
 	CMD_TIME         byte = 0x05
 	CMD_SET_USERNAME byte = 0x06
 	CMD_ECHO         byte = 0x07
+	CMD_LIST_USERS   byte = 0x08
 
 	// Connection Protocol
 	CMD_CONNECT_SYN     byte = 0x10
@@ -164,14 +165,15 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 4. Client must send [0x13] (CMD_HEARTBEAT) periodically to stay connected.
 
 [Commands (Byte | Name | Payload)]
-0x06 | SET_USERNAME | string(username)
-0x02 | BROADCAST    | string(message)
-0x07 | ECHO         | []byte(any data)
-0x03 | STATUS       | (no payload)
-0x05 | TIME         | (no payload)
-0x04 | PROCESS_DATA | string(any text to be reversed)
-0x30 | VERSION      | (no payload)
-0x31 | HELP         | (no payload) - Returns REPL client help.
+0x06 | SET_USERNAME 	| string(username)
+0x02 | BROADCAST    	| string(message)
+0x07 | ECHO         	| []byte(any data)
+0x03 | STATUS       	| (no payload)
+0x05 | TIME         	| (no payload)
+0x04 | PROCESS_DATA 	| string(any text to be reversed)
+0x08 | CMD_LIST_USERS 	| []byte(usernames) 
+0x30 | VERSION        	| (no payload)
+0x31 | HELP           	| (no payload) - Returns REPL client help.
 
 [Database]
 0x20 | DB_STORE     | key=value
@@ -204,7 +206,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.6.7) ---
+--- GUFS Help (v0.7.0) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -214,6 +216,7 @@ Example: /username Alice
 [Messaging]
 /username <name>       Set your display name.
 /echo <message>        Server repeats a message back to you.
+/users				   Server sends list of connected client usernames.
 
 [Server Info]
 /help                  Show this help message.
@@ -324,6 +327,13 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		clientsMutex.Unlock()
 		statusMsg := fmt.Sprintf("Server Uptime: %s | Connected Clients: %d", uptime, numClients)
 		conn.WriteToUDP([]byte(statusMsg), addr)
+
+	case CMD_LIST_USERS:
+		clientsMutex.Lock()
+		defer clientsMutex.Unlock()
+
+		userList := []byte(trimTrailingNewline(getUsers()))
+		conn.WriteToUDP(userList, addr)
 
 	case CMD_BROADCAST:
 		clientsMutex.Lock()
@@ -828,4 +838,22 @@ func isUsernameTaken(username string, excludeAddr string) bool {
 		}
 	}
 	return false
+}
+
+func getUsers() string {
+	var result string
+	for _, client := range clients {
+		if client.IsConnected {
+			result += client.Username + "\n"
+		}
+	}
+
+	return result
+}
+
+func trimTrailingNewline(s string) string {
+	if strings.HasSuffix(s, "\n") {
+		return s[:len(s)-1]
+	}
+	return s
 }
