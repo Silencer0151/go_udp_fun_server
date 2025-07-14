@@ -82,6 +82,9 @@ Once connected, you can use various commands:
 # Send a broadcast message
 Hello everyone!
 
+# List all users connected to the server
+/users
+
 # Echo test
 /echo Hello World
 
@@ -148,6 +151,7 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x05` | TIME | None | Get current server time |
 | `0x06` | SET_USERNAME | `string(username)` | Set client display name |
 | `0x07` | ECHO | `[]byte(data)` | Echo data back to client |
+| `0x08` | CMD_LIST_USERS | `string(usernames)` | Return list of active users | 
 | `0x10` | CONNECT_SYN | None | Initiate connection |
 | `0x11` | CONNECT_SYN_ACK | None | Server connection response |
 | `0x12` | CONNECT_ACK | None | Client connection confirmation |
