@@ -21,7 +21,6 @@
 		Current Method (Stop-and-Wait): Send chunk 0 -> Wait for ACK 0 -> Send chunk 1 -> Wait for ACK 1...
 		New Method (Sliding Window): Send chunks 0, 1, 2, 3, 4, 5 all at once. As ACKs for 0, 1, 2 come back, send chunks 6, 7, 8.
 
-	- List Online users /users command
 	- Private messaging /msg username message
 	- File deletion /delete filename
 	- Ping and latency management /ping
@@ -309,9 +308,18 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			fmt.Printf("Set username for %s to '%s'\n", addr, username)
 			conn.WriteToUDP([]byte("Username set successfully!"), addr)
 
-			// Optional: Broadcast username change to other clients
-			if oldUsername != "" && oldUsername != username {
-				changeMsg := fmt.Sprintf("User '%s' changed their name to '%s'", oldUsername, username)
+			if oldUsername == "" {
+				joinMsg := fmt.Sprintf("[Server]: Welcome, %s has joined!", username)
+				// Broadcast the join message
+				for clientAddr, otherClient := range clients {
+					if clientAddr != addrStr && otherClient.IsConnected {
+						conn.WriteToUDP([]byte(joinMsg), otherClient.Addr)
+					}
+				}
+			} else if oldUsername != username {
+				// If oldUsername was not empty and is different, it's a name change.
+				changeMsg := fmt.Sprintf("[Server]: User '%s' changed their name to '%s'", oldUsername, username)
+				// Broadcast the name change
 				for clientAddr, otherClient := range clients {
 					if clientAddr != addrStr && otherClient.IsConnected {
 						conn.WriteToUDP([]byte(changeMsg), otherClient.Addr)
@@ -409,7 +417,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		conn.WriteToUDP([]byte("Value stored successfully."), addr)
 
 		// Broadcast that a value was set
-		messageToBroadcast := fmt.Sprintf("User [%s] has set a value for %s", senderUsername, key)
+		messageToBroadcast := fmt.Sprintf("[Server]: User [%s] has set a value for %s", senderUsername, key)
 		clientsMutex.Lock()
 		for _, client := range clients {
 			if client.Addr.String() != addrStr && client.IsConnected {
@@ -738,7 +746,7 @@ func cleanupDeadClients(conn *net.UDPConn) {
 			if time.Since(client.LastHeartbeat) > timeout {
 				// Announce user disconnect if they had a username
 				if client.Username != "" {
-					disconnectMsg := fmt.Sprintf("User '%s' has disconnected or timed out.", client.Username)
+					disconnectMsg := fmt.Sprintf("[Server]: User '%s' has disconnected or timed out.", client.Username)
 					fmt.Printf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
 
 					// Notify other clients
