@@ -22,7 +22,6 @@
 		New Method (Sliding Window): Send chunks 0, 1, 2, 3, 4, 5 all at once. As ACKs for 0, 1, 2 come back, send chunks 6, 7, 8.
 
 	- File deletion /delete filename
-	- Ping and latency management /ping
 	- Message history
 
 	- encryption
