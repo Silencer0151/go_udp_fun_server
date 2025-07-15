@@ -24,6 +24,7 @@ const (
 	CMD_SET_USERNAME byte = 0x06
 	CMD_ECHO         byte = 0x07
 	CMD_LIST_USERS   byte = 0x08
+	CMD_PRIVATE_MSG  byte = 0x09
 
 	// Connection Protocol
 	CMD_CONNECT_SYN     byte = 0x10
@@ -262,6 +263,18 @@ func (c *Client) handleUserInput() {
 				c.sendCommand(CMD_ECHO, []byte(strings.Join(args, " ")))
 			case "/reverse":
 				c.sendCommand(CMD_PROCESS_DATA, []byte(strings.Join(args, " ")))
+			case "/msg":
+				if len(args) > 1 {
+					receiver := args[0]
+					message := strings.Join(args[1:], " ")
+
+					// create payload with '\n' seperator for ease of parsing
+					payload := []byte(receiver + "\n" + message)
+					c.sendCommand(CMD_PRIVATE_MSG, payload)
+
+				} else {
+					fmt.Println("Usage: /msg <username> <message>")
+				}
 			case "/store":
 				c.sendCommand(CMD_DB_STORE, []byte(strings.Join(args, " ")))
 			case "/retrieve":

@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.7.0
+// Version: 0.7.8
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -21,10 +21,11 @@
 		Current Method (Stop-and-Wait): Send chunk 0 -> Wait for ACK 0 -> Send chunk 1 -> Wait for ACK 1...
 		New Method (Sliding Window): Send chunks 0, 1, 2, 3, 4, 5 all at once. As ACKs for 0, 1, 2 come back, send chunks 6, 7, 8.
 
-	- Private messaging /msg username message
 	- File deletion /delete filename
 	- Ping and latency management /ping
 	- Message history
+
+	- encryption
 */
 
 package main
@@ -43,7 +44,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.7.0"
+	SERVER_VERSION = "GUFS v0.7.8"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -53,6 +54,7 @@ const (
 	CMD_SET_USERNAME byte = 0x06
 	CMD_ECHO         byte = 0x07
 	CMD_LIST_USERS   byte = 0x08
+	CMD_PRIVATE_MSG  byte = 0x09
 
 	// Connection Protocol
 	CMD_CONNECT_SYN     byte = 0x10
@@ -171,6 +173,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x05 | TIME         	| (no payload)
 0x04 | PROCESS_DATA 	| string(any text to be reversed)
 0x08 | CMD_LIST_USERS 	| []byte(usernames) 
+0x09 | CMD_PRIVATE_MSG  | []byte(receiver'\n'message)
 0x30 | VERSION        	| (no payload)
 0x31 | HELP           	| (no payload) - Returns REPL client help.
 
@@ -205,7 +208,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.7.0) ---
+--- GUFS Help (v0.7.8) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -216,6 +219,7 @@ Example: /username Alice
 /username <name>       Set your display name.
 /echo <message>        Server repeats a message back to you.
 /users				   Server sends list of connected client usernames.
+/msg <username>	<message> Direct message user connected to the server.
 
 [Server Info]
 /help                  Show this help message.
@@ -376,6 +380,55 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 		reversedPayload := []byte(string(runes))
 		conn.WriteToUDP(reversedPayload, addr)
+
+	case CMD_PRIVATE_MSG:
+		// 1. Parse the payload: [receiverUsername]\n[message]
+		parts := bytes.SplitN(payload, []byte("\n"), 2)
+		if len(parts) != 2 {
+			// Invalid payload format, do nothing.
+			return
+		}
+		receiverUsername := string(parts[0])
+		message := string(parts[1])
+
+		clientsMutex.Lock()
+
+		// 2. Get the sender's username
+		sender, senderOK := clients[addr.String()]
+		if !senderOK || sender.Username == "" {
+			// The sender is not properly connected or has no username.
+			clientsMutex.Unlock()
+			conn.WriteToUDP([]byte("Error: You must have a username to send messages."), addr)
+			return
+		}
+
+		// 3. Find the receiver client
+		var receiverClient Client
+		receiverFound := false
+		for _, client := range clients {
+			if client.Username == receiverUsername && client.IsConnected {
+				receiverClient = client
+				receiverFound = true
+				break
+			}
+		}
+
+		// Unlock the mutex after reading from the map is finished.
+		clientsMutex.Unlock()
+
+		// 4. Relay the message or send an error
+		if receiverFound {
+			// Format the private message
+			formattedMsg := fmt.Sprintf("[Private from %s]: %s", sender.Username, message)
+			conn.WriteToUDP([]byte(formattedMsg), receiverClient.Addr)
+
+			// Send a confirmation back to the sender
+			conn.WriteToUDP([]byte("Message sent."), addr)
+		} else {
+			// Send an error if the user was not found
+			errorMsg := fmt.Sprintf("Error: User '%s' not found or is not connected.", receiverUsername)
+			conn.WriteToUDP([]byte(errorMsg), addr)
+		}
 
 	case CMD_DB_STORE:
 		// First, check if the client is valid. This only requires the clientMutex.
