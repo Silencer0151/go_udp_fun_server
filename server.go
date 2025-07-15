@@ -62,6 +62,8 @@ const (
 	CMD_CONNECT_ACK     byte = 0x12
 	CMD_HEARTBEAT       byte = 0x13
 	CMD_DISCONNECT      byte = 0x14
+	CMD_PING            byte = 0x15
+	CMD_PONG            byte = 0x16
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -174,6 +176,8 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x04 | PROCESS_DATA 	| string(any text to be reversed)
 0x08 | CMD_LIST_USERS 	| []byte(usernames) 
 0x09 | CMD_PRIVATE_MSG  | []byte(receiver'\n'message)
+0x15 | CMD_PING         | (no payload) 
+0x16 | CMD_PONG         | (no payload) 
 0x30 | VERSION        	| (no payload)
 0x31 | HELP           	| (no payload) - Returns REPL client help.
 
@@ -227,6 +231,7 @@ Example: /username Alice
 /status                Get server uptime and client count.
 /time                  Get the current server time.
 /reverse <message>     Server reverses a string for you.
+/ping				   Get ping from server.
 
 [Key-Value Database]
 /store <key=value>     Store a value in the database.
@@ -276,6 +281,10 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 	// Route commands
 	switch command {
+	case CMD_PING:
+		conn.WriteToUDP([]byte{CMD_PONG}, addr)
+		fmt.Printf("Sent PONG to %s\n", client.Username)
+
 	case CMD_TIME:
 		serverTime := time.Now().Format(time.RFC3339)
 		conn.WriteToUDP([]byte(serverTime), addr)

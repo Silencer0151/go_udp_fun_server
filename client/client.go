@@ -32,6 +32,8 @@ const (
 	CMD_CONNECT_ACK     byte = 0x12
 	CMD_HEARTBEAT       byte = 0x13
 	CMD_DISCONNECT      byte = 0x14
+	CMD_PING            byte = 0x15
+	CMD_PONG            byte = 0x16
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -237,6 +239,15 @@ func (c *Client) handleUserInput() {
 			args := parts[1:]
 
 			switch command {
+			case "/ping":
+				start := time.Now()
+				_, err := c.sendAndReceive(CMD_PING, nil, 5*time.Second)
+				if err != nil {
+					fmt.Printf("Ping failed: %v\n", err)
+				} else {
+					elapsed := time.Since(start)
+					fmt.Printf("Pong received in %s\n", elapsed)
+				}
 			case "/quit":
 				c.sendCommand(CMD_DISCONNECT, nil)
 				time.Sleep(50 * time.Millisecond)
