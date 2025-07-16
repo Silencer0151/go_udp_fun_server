@@ -138,6 +138,8 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 
 1. **Handshake Sequence**:
    ```
+   If encryption:
+   Encryption handshake KEY_EXCHANGE - KEY CONFIRM
    Client → Server: [0x10] (SYN)
    Server → Client: [0x11] (SYN-ACK)
    Client → Server: [0x12] (ACK)
@@ -166,6 +168,8 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x14` | DISCONNECT | None | Disconnect from server |
 | `0x15` | CMD_PING | None | Sent to server from client to receive pong |
 | `0x16` | CMD_PONG | None | Send back to client after ping received |
+| `0x17` | KEY_EXCHANGE | `[]byte(publicKey)` | Exchange public keys for encryption |
+| `0x18` | KEY_CONFIRM  | None                | Confirm encryption is enabled        |
 | `0x20` | DB_STORE | `string(key=value)` | Store key-value pair |
 | `0x21` | DB_RETRIEVE | `string(key)` | Retrieve value by key |
 | `0x22` | DB_LIST | None | List all database keys |

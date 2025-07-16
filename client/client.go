@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"gufs/internal/security"
 	"math/rand"
 	"net"
 	"os"
@@ -52,6 +53,13 @@ const (
 	CMD_FILE_LIST           byte = 0x44
 	CMD_FILE_REQUEST_CHUNKS byte = 0x45
 	CMD_FILE_DOWNLOAD_ACK   byte = 0x46
+
+	// New Encryption Handshake Commands
+	CMD_KEY_EXCHANGE byte = 0x17 // Exchange public keys
+	CMD_KEY_CONFIRM  byte = 0x18 // Confirm encryption is ready
+
+	// Special marker to identify encrypted packets
+	ENCRYPTED_MARKER byte = 0xFF // Prepended to encrypted data
 )
 
 const (
@@ -71,6 +79,8 @@ type Client struct {
 	responseLock    sync.Mutex  // Protects the responseChan
 	activeDownloads map[string]*FileDownload
 	downloadMutex   sync.Mutex
+	encMgr          *security.EncryptionManager
+	isEncrypted     bool
 }
 
 // file download hold the state for an incoming file
@@ -117,6 +127,13 @@ func (c *Client) Connect() error {
 		return err
 	}
 
+	// Initialize encryption manager
+	c.encMgr, err = security.NewEncryptionManager()
+	if err != nil {
+		return fmt.Errorf("failed to initialize encryption: %w", err)
+	}
+
+	// Existing handshake
 	_, err = c.conn.Write([]byte{CMD_CONNECT_SYN})
 	if err != nil {
 		return err
@@ -128,15 +145,65 @@ func (c *Client) Connect() error {
 	if err != nil || n == 0 || buffer[0] != CMD_CONNECT_SYN_ACK {
 		return fmt.Errorf("did not receive SYN-ACK from server")
 	}
-	c.conn.SetReadDeadline(time.Time{})
 
 	_, err = c.conn.Write([]byte{CMD_CONNECT_ACK})
 	if err != nil {
 		return err
 	}
 
+	// NEW: Key exchange after successful handshake
+	err = c.performKeyExchange()
+	if err != nil {
+		fmt.Printf("Warning: Encryption setup failed: %v. Continuing without encryption.\n", err)
+	} else {
+		c.isEncrypted = true
+		fmt.Println("🔒 Secure connection established")
+	}
+
 	c.isConnected = true
-	fmt.Printf("Successfully connected to %s as '%s'. Type /help for commands.\n", c.serverAddr, c.username)
+	fmt.Printf("Successfully connected to %s as '%s'.\n", c.serverAddr, c.username)
+	return nil
+}
+
+func (c *Client) performKeyExchange() error {
+	// Send our public key
+	ourPublicKey := c.encMgr.GetPublicKey()
+	keyExchangePacket := append([]byte{CMD_KEY_EXCHANGE}, ourPublicKey...)
+	_, err := c.conn.Write(keyExchangePacket)
+	if err != nil {
+		return err
+	}
+
+	// Receive server's public key
+	buffer := make([]byte, 1024)
+	c.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, err := c.conn.Read(buffer)
+	if err != nil || n < 2 || buffer[0] != CMD_KEY_EXCHANGE {
+		return fmt.Errorf("invalid key exchange response")
+	}
+	c.conn.SetReadDeadline(time.Time{})
+
+	// Establish shared secret
+	serverPublicKey := buffer[1:n]
+	err = c.encMgr.SetSharedSecret(serverPublicKey)
+	if err != nil {
+		return err
+	}
+
+	// Confirm encryption is ready
+	_, err = c.conn.Write([]byte{CMD_KEY_CONFIRM})
+	if err != nil {
+		return err
+	}
+
+	// Wait for server confirmation
+	c.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, err = c.conn.Read(buffer)
+	if err != nil || n == 0 || buffer[0] != CMD_KEY_CONFIRM {
+		return fmt.Errorf("server did not confirm encryption")
+	}
+	c.conn.SetReadDeadline(time.Time{})
+
 	return nil
 }
 
@@ -171,6 +238,17 @@ func (c *Client) handleServerMessages() {
 
 		if len(data) == 0 {
 			continue
+		}
+
+		// Decrypt if encryption is enabled
+		if c.isEncrypted && c.encMgr != nil && c.encMgr.IsReady() {
+			decrypted, err := c.encMgr.Decrypt(data)
+			if err != nil {
+				// Might be unencrypted packet, continue with original
+				fmt.Printf("Warning: Could not decrypt packet: %v\n", err)
+			} else {
+				data = decrypted
+			}
 		}
 
 		command := data[0]
@@ -333,6 +411,17 @@ func (c *Client) handleHeartbeats() {
 // sendCommand is a simple helper to construct and send a packet.
 func (c *Client) sendCommand(cmd byte, payload []byte) {
 	packet := append([]byte{cmd}, payload...)
+
+	// Encrypt if encryption is enabled and ready
+	if c.isEncrypted && c.encMgr != nil && c.encMgr.IsReady() {
+		encrypted, err := c.encMgr.Encrypt(packet)
+		if err != nil {
+			fmt.Printf("\nEncryption failed, sending unencrypted: %v\n", err)
+		} else {
+			packet = encrypted
+		}
+	}
+
 	_, err := c.conn.Write(packet)
 	if err != nil {
 		select {
@@ -383,13 +472,14 @@ func (c *Client) sendFile(filePath string) {
 	go func() {
 		for i := 0; i < totalChunks; i++ {
 			select {
-			case ackNum := <-c.ackChan:
-				ackedMutex.Lock()
-				ackedChunks[int(ackNum)] = true
-				ackedMutex.Unlock()
-			case <-time.After(10 * time.Second): // Timeout if no ACKs are received at all
-				doneChan <- fmt.Errorf("upload timed out")
-				return
+			case err = <-doneChan:
+				if err != nil {
+					fmt.Printf("\rUpload failed: %v\n> ", err)
+				} else {
+					fmt.Printf("\rUpload complete for '%s'.\n> ", filename)
+				}
+			case <-time.After(5 * time.Second): // 5-second timeout for final ACKs
+				fmt.Printf("\rUpload finished, but timed out waiting for final acknowledgements.\n> ")
 			}
 		}
 		doneChan <- nil // Success
