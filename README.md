@@ -13,6 +13,10 @@
 - **Concurrent Architecture**: Handles multiple clients simultaneously using goroutines
 - **Thread-Safe Operations**: Mutex-protected shared state management
 
+### Security Features
+- **End-to-End Encryption**: All communication (after handshake) is secured using AES-256-GCM.
+- **Secure Key Exchange** : Elliptic-curve Diffie-Hellman (ECDH) is used to safely establish a shared secret over an insecure channel.
+
 ### Communication Features
 - **Real-time Broadcasting**: Multi-client messaging system
 - **Direct Messaging**: Echo and data processing commands
@@ -35,22 +39,25 @@
 
 ## 🛠️ Installation
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/go_udp_fun_server.git
-cd go_udp_fun_server
-```
+## 🛠️ Installation
 
-2. Build the server:
-```bash
-go build -o gufs-server server.go
-```
+1.  **Clone the repository:**
+    ```bash
+    git clone [https://github.com/yourusername/go_udp_fun_server.git](https://github.com/yourusername/go_udp_fun_server.git)
+    cd go_udp_fun_server
+    ```
 
-3. Build the client:
-```bash
-cd client
-go build -o gufs-client client.go
-```
+2.  **Build the executables:**
+    The project uses Go modules, so building is straightforward. The following commands can be run from the project root directory.
+    ```bash
+    # Build the server (output to ./build/gufs-server.exe)
+    go build -o ./build/gufs-server.exe .
+
+    # Build the client (output to ./build/gufs-client.exe)
+    go build -o ./build/gufs-client.exe ./client
+    ```
+    Alternatively, you can use the provided `build.bat` script on Windows.
+
 
 ## 🚀 Quick Start
 
@@ -123,6 +130,9 @@ go_udp_fun_server/
 ├── client/
 |   ├── downloads/         # Client download directory (created automatically)
 │   └── client.go          # Interactive client implementation
+├── internal/
+|   └── security/
+|           └── encryption.go # encryption layer used by client and server 
 ├── test/
 │   ├── test_suite.go      # Comprehensive test suite
 │   └── pycat.py           # Simple Python netcat clone for testing against server
@@ -138,14 +148,31 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 
 1. **Handshake Sequence**:
    ```
-   If encryption:
-   Encryption handshake KEY_EXCHANGE - KEY CONFIRM
-   Client → Server: [0x10] (SYN)
-   Server → Client: [0x11] (SYN-ACK)
-   Client → Server: [0x12] (ACK)
+      A standard 3-way handshake is required to establish a connection.
+
+         Client → Server: [0x10] (CONNECT_SYN)
+
+         Server → Client: [0x11] (CONNECT_SYN_ACK)
+
+         Client → Server: [0x12] (CONNECT_ACK)
    ```
 
-2. **Session Maintenance**:
+2. **Encryption Handshake (Optional)**
+   ```
+      Immediately after the connection is established, the client may initiate a key exchange to enable end-to-end encryption.
+
+      Client → Server: [0x17][Client Public Key]
+
+      Server → Client: [0x17][Server Public Key]
+
+      Client → Server: [0x18] (KEY_CONFIRM)
+
+      Server → Client: [0x18] (KEY_CONFIRM)
+
+      After this handshake, all further communication between this client and the server is encrypted.
+   ```
+
+3. **Session Maintenance**:
    - Clients must send heartbeats `[0x13]` every 15 seconds
    - Server removes inactive clients after 60 seconds
 
