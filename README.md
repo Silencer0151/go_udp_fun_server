@@ -284,6 +284,29 @@ Testing: Set Username to 'TestClient1'
 - File chunk size: 1KB
 - Client timeout: 60 seconds without heartbeat
 
+
+## 🔒 Security & Encryption
+
+### Automatic Encryption
+GUFS automatically negotiates encryption with compatible clients:
+- **New clients**: Receive full AES-256-GCM encryption automatically
+- **Legacy clients**: Continue to work without encryption (backwards compatible)
+- **Mixed environments**: Encrypted and unencrypted clients can coexist on the same server
+
+### Encryption Details
+- **Algorithm**: AES-256-GCM (Galois/Counter Mode)
+- **Key Exchange**: ECDH P-256 (Elliptic Curve Diffie-Hellman)
+- **Key Length**: 256-bit encryption keys
+- **Authentication**: Built-in message authentication prevents tampering
+- **Forward Secrecy**: Keys are ephemeral and not stored
+
+### Connection Security Flow
+1. Standard UDP handshake establishes connection
+2. Client and server exchange ECDH public keys
+3. Both derive shared AES-256 key from ECDH
+4. All subsequent communication is encrypted and authenticated
+5. Legacy clients skip steps 2-4 and communicate unencrypted
+
 ## 🐛 Troubleshooting
 
 ### Common Issues
@@ -311,6 +334,22 @@ Testing: Set Username to 'TestClient1'
    - Set username with `/username YourName`
    - Username is required for most operations
 
+4. **Encryption Warnings**
+   ```bash
+   Warning: Encryption setup failed: server did not confirm encryption
+   ```
+   - This is normal when connecting to older servers
+   - Client will continue with unencrypted communication
+   - All functionality remains available
+
+5. **Mixed Client Environment**
+   ```bash
+   Some clients show 🔒 indicator, others don't
+   ```
+   - This is expected behavior in mixed environments
+   - Encrypted clients show 🔒 lock icon
+   - All clients can communicate regardless of encryption status
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -333,6 +372,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built for learning UDP networking concepts
 - Inspired by traditional IRC servers
 - Designed for educational and experimental use
+
+### 🎯 **Key Highlights**
+- **Military-grade encryption** with zero configuration required
+- **Seamless backwards compatibility** with legacy clients  
+- **Perfect forward secrecy** protects past communications
+- **Automatic security negotiation** without user intervention
 
 ---
 
