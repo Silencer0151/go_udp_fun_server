@@ -3,7 +3,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.19+-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**GUFS** (Go UDP Fun Server) is a concurrent, stateful UDP server designed for learning and experimentation with custom network protocols. It implements a robust binary communication protocol supporting client connections, real-time messaging, persistent data storage, and reliable file transfers.
+**GUFS** (Go UDP Fun Server) is a concurrent, stateful UDP server designed for learning and experimentation with custom network protocols. It implements a robust binary communication protocol supporting client connections, real-time messaging, persistent data storage, and reliable file transfers over a hands free end-to-end encryption.
 
 ## 🚀 Features
 
@@ -36,8 +36,6 @@
 
 - Go 1.19 or higher
 - Network access for UDP communication (default: localhost:8080)
-
-## 🛠️ Installation
 
 ## 🛠️ Installation
 
