@@ -17,7 +17,6 @@
 
 /*
 	-- TODO LIST --
-	- Client detection of server dropping
 	- File deletion /delete filename
 	- Message history
 */
