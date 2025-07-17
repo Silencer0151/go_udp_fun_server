@@ -28,13 +28,14 @@ const (
 	CMD_PRIVATE_MSG  byte = 0x09
 
 	// Connection Protocol
-	CMD_CONNECT_SYN     byte = 0x10
-	CMD_CONNECT_SYN_ACK byte = 0x11
-	CMD_CONNECT_ACK     byte = 0x12
-	CMD_HEARTBEAT       byte = 0x13
-	CMD_DISCONNECT      byte = 0x14
-	CMD_PING            byte = 0x15
-	CMD_PONG            byte = 0x16
+	CMD_CONNECT_SYN      byte = 0x10
+	CMD_CONNECT_SYN_ACK  byte = 0x11
+	CMD_CONNECT_ACK      byte = 0x12
+	CMD_HEARTBEAT        byte = 0x13
+	CMD_DISCONNECT       byte = 0x14
+	CMD_PING             byte = 0x15
+	CMD_PONG             byte = 0x16
+	CMD_SERVER_HEARTBEAT byte = 0x19
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -68,19 +69,20 @@ const (
 
 // Client holds the state for a single client connection.
 type Client struct {
-	conn            net.Conn
-	username        string
-	serverAddr      string
-	isConnected     bool
-	quitChan        chan struct{}
-	ackChan         chan uint32 // Channel for file upload ACKs
-	responseChan    chan []byte // Channel for direct command responses
-	transferLock    sync.Mutex  // Prevents multiple file transfers at once
-	responseLock    sync.Mutex  // Protects the responseChan
-	activeDownloads map[string]*FileDownload
-	downloadMutex   sync.Mutex
-	encMgr          *security.EncryptionManager
-	isEncrypted     bool
+	conn               net.Conn
+	username           string
+	serverAddr         string
+	isConnected        bool
+	quitChan           chan struct{}
+	ackChan            chan uint32 // Channel for file upload ACKs
+	responseChan       chan []byte // Channel for direct command responses
+	transferLock       sync.Mutex  // Prevents multiple file transfers at once
+	responseLock       sync.Mutex  // Protects the responseChan
+	lastServerActivity time.Time
+	activeDownloads    map[string]*FileDownload
+	downloadMutex      sync.Mutex
+	encMgr             *security.EncryptionManager
+	isEncrypted        bool
 }
 
 // file download hold the state for an incoming file
@@ -151,7 +153,7 @@ func (c *Client) Connect() error {
 		return err
 	}
 
-	// NEW: Key exchange after successful handshake
+	// Key exchange after successful handshake
 	err = c.performKeyExchange()
 	if err != nil {
 		fmt.Printf("Warning: Encryption setup failed: %v. Continuing without encryption.\n", err)
@@ -159,7 +161,7 @@ func (c *Client) Connect() error {
 		c.isEncrypted = true
 		fmt.Println("🔒 Secure connection established")
 	}
-
+	c.lastServerActivity = time.Now()
 	c.isConnected = true
 	fmt.Printf("Successfully connected to %s as '%s'.\n", c.serverAddr, c.username)
 	return nil
@@ -212,6 +214,7 @@ func (c *Client) Run() {
 	go c.handleServerMessages()
 	go c.handleUserInput()
 	go c.handleHeartbeats()
+	go c.checkServerLiveness()
 
 	<-c.quitChan
 	fmt.Println("Disconnecting from server...")
@@ -222,6 +225,8 @@ func (c *Client) handleServerMessages() {
 	buffer := make([]byte, 8192)
 	for {
 		n, err := c.conn.Read(buffer)
+		c.lastServerActivity = time.Now()
+
 		if err != nil {
 			select {
 			case <-c.quitChan: // Expected closure
@@ -727,5 +732,25 @@ func (c *Client) sendAndReceive(cmd byte, payload []byte, timeout time.Duration)
 		return response, nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("timeout waiting for response")
+	}
+}
+
+func (c *Client) checkServerLiveness() {
+	// The timeout duration should be longer than the server's heartbeat interval (15s)
+	const serverTimeout = 45 * time.Second
+	ticker := time.NewTicker(5 * time.Second) // Check every 5 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if time.Since(c.lastServerActivity) > serverTimeout {
+				fmt.Printf("\nConnection to server timed out. No response for over %v.\n", serverTimeout)
+				close(c.quitChan) // Trigger a clean shutdown
+				return
+			}
+		case <-c.quitChan:
+			return // Exit if the client is quitting normally
+		}
 	}
 }

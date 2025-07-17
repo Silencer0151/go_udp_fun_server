@@ -195,6 +195,7 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x16` | CMD_PONG | None | Send back to client after ping received |
 | `0x17` | KEY_EXCHANGE | `[]byte(publicKey)` | Exchange public keys for encryption |
 | `0x18` | KEY_CONFIRM  | None                | Confirm encryption is enabled        |
+| `0x19` | CMD_SERVER_HEARTBEAT | None | Ensure server is alive |
 | `0x20` | DB_STORE | `string(key=value)` | Store key-value pair |
 | `0x21` | DB_RETRIEVE | `string(key)` | Retrieve value by key |
 | `0x22` | DB_LIST | None | List all database keys |

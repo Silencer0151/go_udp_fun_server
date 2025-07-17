@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.9.2
+// Version: 0.9.3
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -39,7 +39,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.9.2"
+	SERVER_VERSION = "GUFS v0.9.3"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -52,13 +52,14 @@ const (
 	CMD_PRIVATE_MSG  byte = 0x09
 
 	// Connection Protocol
-	CMD_CONNECT_SYN     byte = 0x10
-	CMD_CONNECT_SYN_ACK byte = 0x11
-	CMD_CONNECT_ACK     byte = 0x12
-	CMD_HEARTBEAT       byte = 0x13
-	CMD_DISCONNECT      byte = 0x14
-	CMD_PING            byte = 0x15
-	CMD_PONG            byte = 0x16
+	CMD_CONNECT_SYN      byte = 0x10
+	CMD_CONNECT_SYN_ACK  byte = 0x11
+	CMD_CONNECT_ACK      byte = 0x12
+	CMD_HEARTBEAT        byte = 0x13
+	CMD_DISCONNECT       byte = 0x14
+	CMD_PING             byte = 0x15
+	CMD_PONG             byte = 0x16
+	CMD_SERVER_HEARTBEAT byte = 0x19
 
 	// Database Commands
 	CMD_DB_STORE    byte = 0x20
@@ -168,6 +169,8 @@ func main() {
 	go cleanupDeadClients(conn)
 	// cleanup download sessions
 	go cleanupDownloadSessions()
+	// send heartbeats to clients
+	go sendServerHeartbeats(conn)
 
 	buffer := make([]byte, 8192)
 	for {
@@ -237,6 +240,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x16 | CMD_PONG          | (no payload)
 0x17 | CMD_KEY_EXCHANGE  | []byte(publicKey)
 0x18 | CMD_KEY_CONFIRM   | (no payload)
+0x19 | CMD_SERVER_HEARTBEAT | (no payload)
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 
@@ -271,7 +275,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.9.2) ---
+--- GUFS Help (v0.9.3) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -1214,6 +1218,29 @@ func trimTrailingNewline(s string) string {
 		return s[:len(s)-1]
 	}
 	return s
+}
+
+func sendServerHeartbeats(conn *net.UDPConn) {
+	// Send a heartbeat every 15 seconds
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		clientsMutex.Lock()
+		// Create a copy of the clients map to avoid holding the lock while writing to the network
+		clientsCopy := make(map[string]Client)
+		for k, v := range clients {
+			clientsCopy[k] = v
+		}
+		clientsMutex.Unlock()
+
+		for _, client := range clientsCopy {
+			if client.IsConnected {
+				// We don't need a payload, just the command byte is enough
+				secureWriteToUDP(conn, []byte{CMD_SERVER_HEARTBEAT}, client.Addr, &client)
+			}
+		}
+	}
 }
 
 func secureWriteToUDP(conn *net.UDPConn, data []byte, addr *net.UDPAddr, client *Client) (int, error) {
