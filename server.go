@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.9.0
+// Version: 0.9.2
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -17,10 +17,7 @@
 
 /*
 	-- TODO LIST --
-	- Implement Sliding Window:
-		Current Method (Stop-and-Wait): Send chunk 0 -> Wait for ACK 0 -> Send chunk 1 -> Wait for ACK 1...
-		New Method (Sliding Window): Send chunks 0, 1, 2, 3, 4, 5 all at once. As ACKs for 0, 1, 2 come back, send chunks 6, 7, 8.
-
+	- Client detection of server dropping
 	- File deletion /delete filename
 	- Message history
 */
@@ -42,7 +39,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.9.0"
+	SERVER_VERSION = "GUFS v0.9.2"
 
 	// General Commands
 	CMD_BROADCAST    byte = 0x02
@@ -116,10 +113,31 @@ type FileTransfer struct {
 	TotalChunks    uint32
 	ReceivedChunks map[uint32][]byte
 	LastActivity   time.Time
+	LastProgress   time.Time
 }
 
 var activeTransfers = make(map[string]*FileTransfer) // key: transfer ID
 var transfersMutex = &sync.Mutex{}
+
+type FileDownloadSession struct {
+	ClientAddr   *net.UDPAddr
+	Filename     string
+	FileData     []byte
+	TotalChunks  int
+	WindowSize   int
+	WindowStart  int
+	WindowEnd    int
+	AckedChunks  map[int]bool
+	LastActivity time.Time
+	RetryCount   map[int]int // Track retries per chunk
+	AckChan      chan int    // Channel for receiving ACKs
+	Done         chan bool   // Signal completion
+	Mutex        sync.Mutex
+}
+
+// Add these global variables
+var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
+var downloadSessionsMutex = &sync.Mutex{}
 
 func main() {
 
@@ -148,6 +166,8 @@ func main() {
 
 	// Start the client cleanup goroutine
 	go cleanupDeadClients(conn)
+	// cleanup download sessions
+	go cleanupDownloadSessions()
 
 	buffer := make([]byte, 8192)
 	for {
@@ -251,7 +271,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.9.0) ---
+--- GUFS Help (v0.9.2) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -617,6 +637,12 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		if _, exists := transfer.ReceivedChunks[sequenceNumber]; !exists {
 			transfer.ReceivedChunks[sequenceNumber] = chunkData
 			transfer.LastActivity = time.Now()
+
+			if time.Since(transfer.LastProgress) > time.Second {
+				progress := (len(transfer.ReceivedChunks) * 100) / int(transfer.TotalChunks)
+				fmt.Printf("Receiving '%s'... %d%% (%d/%d chunks)\n", transfer.Filename, progress, len(transfer.ReceivedChunks), transfer.TotalChunks)
+				transfer.LastProgress = time.Now()
+			}
 		}
 
 		// Check if the transfer is complete
@@ -631,6 +657,36 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		ackPacket[0] = CMD_FILE_ACK
 		binary.BigEndian.PutUint32(ackPacket[1:5], sequenceNumber)
 		secureWriteToUDP(conn, ackPacket, addr, &client)
+
+	case CMD_FILE_ACK:
+		// Improved ACK format: [filename_len (1 byte)][filename][4B seqNum]
+		if len(payload) < 6 { // 1 for len, at least 1 for filename, 4 for seqNum
+			return
+		}
+
+		filenameLen := int(payload[0])
+		if len(payload) < 1+filenameLen+4 {
+			return // Malformed packet
+		}
+
+		filename := string(payload[1 : 1+filenameLen])
+		seqNumPayload := payload[1+filenameLen:]
+		seqNum := int(binary.BigEndian.Uint32(seqNumPayload))
+
+		// Construct the specific session key to find the right download
+		sessionKey := addr.String() + ":" + filename
+
+		downloadSessionsMutex.Lock()
+		if session, ok := downloadSessions[sessionKey]; ok {
+			// Deliver the ACK to the correct channel
+			select {
+			case session.AckChan <- seqNum:
+				// ACK delivered
+			default:
+				// Channel might be full, which is okay.
+			}
+		}
+		downloadSessionsMutex.Unlock()
 
 	case CMD_FILE_REQUEST_CHUNKS:
 		// The payload will be: [filename_len (1 byte)][filename][4B seqNum1][4B seqNum2]...
@@ -795,20 +851,20 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 	const chunkSize = 1024
+	const windowSize = 32
+	const maxRetries = 3
+	const ackTimeout = 2 * time.Second
+
 	filePath := "./uploads/" + filename
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
-		fmt.Printf("File not found for sending: %s\n", filePath)
-
-		// Get client info for encrypted response
+		// Handle error as before
 		clientsMutex.Lock()
 		client, exists := clients[addr.String()]
 		clientsMutex.Unlock()
 
 		if exists {
 			secureWriteToUDP(conn, []byte("Error: File not found on server."), addr, &client)
-		} else {
-			conn.WriteToUDP([]byte("Error: File not found on server."), addr)
 		}
 		return
 	}
@@ -819,65 +875,187 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 	clientsMutex.Unlock()
 
 	if !exists {
-		fmt.Printf("Client not found for file transfer: %s\n", addr.String())
 		return
 	}
 
 	totalChunks := (len(fileData) + chunkSize - 1) / chunkSize
+	sessionKey := addr.String() + ":" + filename
 
-	// --- New Sliding Window Variables ---
-	windowSize := 32
-	windowStart := 0
-	windowEnd := 0
+	// Create download session
+	session := &FileDownloadSession{
+		ClientAddr:   addr,
+		Filename:     filename,
+		FileData:     fileData,
+		TotalChunks:  totalChunks,
+		WindowSize:   windowSize,
+		WindowStart:  0,
+		WindowEnd:    0,
+		AckedChunks:  make(map[int]bool),
+		LastActivity: time.Now(),
+		RetryCount:   make(map[int]int),
+		AckChan:      make(chan int, 100),
+		Done:         make(chan bool, 1),
+	}
 
-	// Announce the file transfer to the client (ENCRYPTED)
+	if totalChunks > 10000 {
+		session.WindowSize = 64 // larger window for big files
+	}
+
+	// Register session
+	downloadSessionsMutex.Lock()
+	downloadSessions[sessionKey] = session
+	downloadSessionsMutex.Unlock()
+
+	// Cleanup on exit
+	defer func() {
+		downloadSessionsMutex.Lock()
+		delete(downloadSessions, sessionKey)
+		downloadSessionsMutex.Unlock()
+		close(session.AckChan)
+		close(session.Done)
+	}()
+
+	// Send file start packet
 	startPayload := make([]byte, 4+len(filename))
 	binary.BigEndian.PutUint32(startPayload[0:4], uint32(totalChunks))
 	copy(startPayload[4:], []byte(filename))
 	startPacket := append([]byte{CMD_FILE_START}, startPayload...)
-	secureWriteToUDP(conn, startPacket, addr, &client) // NOW ENCRYPTED
+	secureWriteToUDP(conn, startPacket, addr, &client)
 
-	fmt.Printf("Starting file send '%s' to %s\n", filename, addr.String())
+	fmt.Printf("Starting sliding window file send '%s' to %s (%d chunks)\n", filename, addr.String(), totalChunks)
 
-	// --- New Sliding Window Send Loop ---
-	for windowStart < totalChunks {
-		// Send packets in the window
-		for windowEnd < totalChunks && windowEnd-windowStart < windowSize {
-			start := windowEnd * chunkSize
-			end := start + chunkSize
-			if end > len(fileData) {
-				end = len(fileData)
+	// Start ACK processor goroutine
+	go processAcks(session)
+
+	// Main sliding window loop
+	lastProgressTime := time.Now()
+	for session.WindowStart < totalChunks {
+		session.Mutex.Lock()
+
+		// NEW: Only send packets to fill the window, don't blast them all at once.
+		// This loop ensures that we've attempted to send every packet up to the
+		// edge of our sliding window.
+		for session.WindowEnd < totalChunks && (session.WindowEnd-session.WindowStart) < session.WindowSize {
+			if !session.AckedChunks[session.WindowEnd] {
+				// Only send if it's not already acknowledged.
+				// We don't check the retry count here; the retransmit function will handle that.
+				sendChunk(conn, session, session.WindowEnd, &client)
 			}
-			chunkData := fileData[start:end]
-
-			// Packet: [CMD_CHUNK][SeqNum][Data]
-			packet := make([]byte, 1+4+len(chunkData))
-			packet[0] = CMD_FILE_CHUNK
-			binary.BigEndian.PutUint32(packet[1:5], uint32(windowEnd))
-			copy(packet[5:], chunkData)
-
-			secureWriteToUDP(conn, packet, addr, &client) // NOW ENCRYPTED
-			windowEnd++
+			session.WindowEnd++
 		}
 
-		// This is where the server would wait on its ackChan.
-		// Since we can't easily create a new listener here, we will just
-		// add a small delay to simulate the flow. The real performance gain
-		// comes from the client-side upload window.
-		time.Sleep(50 * time.Millisecond)
+		// Progress reporting remains the same
+		progress := (session.WindowStart * 100) / totalChunks
+		if time.Since(lastProgressTime) > 2*time.Second {
+			fmt.Printf("Sending '%s': %d%% (%d/%d chunks)\n", filename, progress, session.WindowStart, totalChunks)
+			lastProgressTime = time.Now()
+		}
 
-		// In a full implementation, we would slide the window like this:
-		// ackedMutex.Lock()
-		// for ackedChunks[windowStart] {
-		// 	windowStart++
-		// }
-		// ackedMutex.Unlock()
+		allAcked := len(session.AckedChunks) >= totalChunks
+		session.Mutex.Unlock()
 
-		// Simplified slide for this example:
-		windowStart = windowEnd
+		if allAcked {
+			break
+		}
+
+		// Check for timeout and retransmit lost packets.
+		// This is the core of our pacing. We send a bit, then check for ACKs/timeouts.
+		if time.Since(session.LastActivity) > ackTimeout {
+			retransmitTimeouts(conn, session, &client)
+			session.Mutex.Lock()
+			session.LastActivity = time.Now() // Reset activity timer after retransmit
+			session.Mutex.Unlock()
+		}
+
+		// A short sleep to prevent the loop from busy-waiting and consuming 100% CPU.
+		// This gives the network and other goroutines time to process.
+		time.Sleep(10 * time.Millisecond)
 	}
 
-	fmt.Printf("Finished sending file '%s' to %s\n", filename, addr.String())
+	fmt.Printf("Completed sliding window file send '%s' to %s\n", filename, addr.String())
+}
+
+func sendChunk(conn *net.UDPConn, session *FileDownloadSession, seqNum int, client *Client) {
+	const chunkSize = 1024
+
+	start := seqNum * chunkSize
+	end := start + chunkSize
+	if end > len(session.FileData) {
+		end = len(session.FileData)
+	}
+	chunkData := session.FileData[start:end]
+
+	// Create packet: [CMD_FILE_CHUNK][4B seqNum][data]
+	packet := make([]byte, 1+4+len(chunkData))
+	packet[0] = CMD_FILE_CHUNK
+	binary.BigEndian.PutUint32(packet[1:5], uint32(seqNum))
+	copy(packet[5:], chunkData)
+
+	secureWriteToUDP(conn, packet, session.ClientAddr, client)
+	session.RetryCount[seqNum]++
+}
+
+func processAcks(session *FileDownloadSession) {
+	timeout := time.NewTimer(30 * time.Second) // Overall timeout
+	defer timeout.Stop()
+
+	for {
+		select {
+		case seqNum := <-session.AckChan:
+			//fmt.Printf("<- [ACK] Received for chunk #%d for '%s'\n", seqNum, session.Filename)
+			session.Mutex.Lock()
+			if seqNum >= 0 && seqNum < session.TotalChunks {
+				session.AckedChunks[seqNum] = true
+				session.LastActivity = time.Now()
+
+				// Reset timeout for active transfers
+				timeout.Reset(30 * time.Second)
+			}
+
+			// Slide the window forward!
+			// As long as the chunk at the start of the window is acked,
+			// we can advance the window.
+			for session.AckedChunks[session.WindowStart] {
+				session.WindowStart++
+			}
+			// Check if complete
+			if session.WindowStart >= session.TotalChunks {
+				session.Mutex.Unlock()
+				return
+			}
+			session.Mutex.Unlock()
+
+		case <-timeout.C:
+			// Overall timeout - check if we should exit
+			session.Mutex.Lock()
+			allDone := session.WindowStart >= session.TotalChunks
+			session.Mutex.Unlock()
+
+			if allDone {
+				return
+			}
+
+			// Reset for continued operation
+			timeout.Reset(30 * time.Second)
+		}
+	}
+}
+
+func retransmitTimeouts(conn *net.UDPConn, session *FileDownloadSession, client *Client) {
+	session.Mutex.Lock()
+	defer session.Mutex.Unlock()
+
+	retransmitCount := 0
+	for i := session.WindowStart; i < session.WindowEnd && i < session.TotalChunks; i++ {
+		if !session.AckedChunks[i] && session.RetryCount[i] < 3 {
+			sendChunk(conn, session, i, client)
+			retransmitCount++
+		}
+	}
+
+	if retransmitCount > 0 {
+		fmt.Printf("Retransmitted %d chunks for %s\n", retransmitCount, session.Filename)
+	}
 }
 
 // This function runs forever, cleaning up clients that have timed out.
@@ -908,6 +1086,23 @@ func cleanupDeadClients(conn *net.UDPConn) {
 			}
 		}
 		clientsMutex.Unlock()
+	}
+}
+
+func cleanupDownloadSessions() {
+	for {
+		time.Sleep(30 * time.Second)
+
+		downloadSessionsMutex.Lock()
+		for sessionKey, session := range downloadSessions {
+			if time.Since(session.LastActivity) > 2*time.Minute {
+				fmt.Printf("Cleaning up stale download session: %s\n", sessionKey)
+				close(session.AckChan)
+				close(session.Done)
+				delete(downloadSessions, sessionKey)
+			}
+		}
+		downloadSessionsMutex.Unlock()
 	}
 }
 
