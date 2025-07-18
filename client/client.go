@@ -288,6 +288,12 @@ func (c *Client) handleServerMessages() {
 				}
 				c.downloadMutex.Unlock()
 			}
+		case CMD_SERVER_HEARTBEAT:
+			// This is the server's liveness check. We've already updated the
+			// lastServerActivity timestamp just by receiving the packet.
+			// We do nothing here to keep the console clean for the user.
+			break
+
 		default:
 			// If a function is waiting for a direct response, send it there.
 			// Otherwise, print it as a general message.
