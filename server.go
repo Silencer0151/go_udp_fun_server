@@ -18,7 +18,11 @@
 /*
 	-- TODO LIST --
 	- File deletion /delete filename
-	- Message history
+	- Server announcement capability
+	- Message history (last 10 or so messages sent to new user)
+	- Chat rooms (create, leave, set topic)
+	- Basic user authentication (hashed password on a simple db)
+		- User persistence, username/pw db
 */
 
 package main
