@@ -54,6 +54,7 @@ const (
 	CMD_FILE_LIST           byte = 0x44
 	CMD_FILE_REQUEST_CHUNKS byte = 0x45
 	CMD_FILE_DOWNLOAD_ACK   byte = 0x46
+	CMD_FILE_DELETE         byte = 0x47
 
 	// New Encryption Handshake Commands
 	CMD_KEY_EXCHANGE byte = 0x17 // Exchange public keys
@@ -395,6 +396,12 @@ func (c *Client) handleUserInput() {
 				}
 			case "/listfiles":
 				c.sendCommand(CMD_FILE_LIST, nil)
+			case "/delete":
+				if len(args) == 1 {
+					c.sendCommand(CMD_FILE_DELETE, []byte(args[0]))
+				} else {
+					fmt.Println("Usage: /delete <filename>")
+				}
 			default:
 				fmt.Printf("\rUnknown command: %s. Type /help.\n", command)
 			}

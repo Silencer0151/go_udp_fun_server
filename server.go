@@ -35,6 +35,7 @@ import (
 	"gufs/internal/security"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -81,6 +82,7 @@ const (
 	CMD_FILE_LIST           byte = 0x44
 	CMD_FILE_REQUEST_CHUNKS byte = 0x45
 	CMD_FILE_DOWNLOAD_ACK   byte = 0x46
+	CMD_FILE_DELETE         byte = 0x47
 
 	// New Encryption Handshake Commands
 	CMD_KEY_EXCHANGE byte = 0x17 // Exchange public keys
@@ -737,6 +739,49 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	case CMD_FILE_GET:
 		filename := string(payload)
 		go sendFileToClient(conn, addr, filename)
+
+	case CMD_FILE_DELETE:
+		clientsMutex.Lock()
+		client, ok := clients[addr.String()]
+		clientsMutex.Unlock()
+
+		if !ok {
+			return // Or handle error appropriately
+		}
+
+		filename := string(payload)
+		filePath := filepath.Join("uploads", filename)
+
+		// Basic security check to prevent directory traversal
+		if strings.Contains(filename, "..") || strings.Contains(filename, "/") || strings.Contains(filename, "\\") {
+			secureWriteToUDP(conn, []byte("Error: Invalid filename."), addr, &client)
+			return
+		}
+
+		err := os.Remove(filePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				secureWriteToUDP(conn, []byte("Error: File not found on server."), addr, &client)
+			} else {
+				secureWriteToUDP(conn, []byte("Error: Could not delete file."), addr, &client)
+			}
+			fmt.Printf("Failed attempt to delete file '%s' by %s: %v\n", filename, client.Username, err)
+			return
+		}
+
+		successMsg := fmt.Sprintf("File '%s' was successfully deleted.", filename)
+		secureWriteToUDP(conn, []byte(successMsg), addr, &client)
+		fmt.Printf("User '%s' deleted file '%s'\n", client.Username, filename)
+
+		// Announce the deletion to all other connected clients
+		broadcastMsg := fmt.Sprintf("[Server]: %s deleted the file '%s'.", client.Username, filename)
+		clientsMutex.Lock()
+		for _, otherClient := range clients {
+			if otherClient.Addr.String() != addr.String() && otherClient.IsConnected {
+				secureWriteToUDP(conn, []byte(broadcastMsg), otherClient.Addr, &otherClient)
+			}
+		}
+		clientsMutex.Unlock()
 
 	case CMD_ECHO:
 		secureWriteToUDP(conn, payload, addr, &client)
