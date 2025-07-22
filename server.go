@@ -17,7 +17,6 @@
 
 /*
 	-- TODO LIST --
-	- File deletion /delete filename
 	- Server announcement capability
 	- Message history (last 10 or so messages sent to new user)
 	- Chat rooms (create, leave, set topic)
