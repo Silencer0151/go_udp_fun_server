@@ -456,7 +456,6 @@ func (c *Client) sendCommand(cmd byte, payload []byte) {
 }
 
 // sendFile handles the logic for uploading a file to the server.
-// sendFile handles the logic for uploading a file to the server.
 func (c *Client) sendFile(filePath string) {
 	c.transferLock.Lock()
 	defer c.transferLock.Unlock()

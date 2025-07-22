@@ -248,6 +248,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x19 | CMD_SERVER_HEARTBEAT | (no payload)
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
+0x47 | CMD_FILE_DELETE   | (no payload) 
 
 [Database]
 0x20 | DB_STORE      | key=value
@@ -310,6 +311,7 @@ Example: /username Alice
 /send <local_filepath> Upload a file to the server.
 /get <filename>        Download a file from the server.
 /listfiles             List all available files on the server.
+/delete <filename>	   Deletes specified file on the server.
 `
 }
 
