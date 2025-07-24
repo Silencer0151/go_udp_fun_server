@@ -146,6 +146,10 @@ var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr 
 var downloadSessionsMutex = &sync.Mutex{}
 var logChannel = make(chan string, 50)
 var shutdownChan = make(chan struct{})
+var replShutdown = make(chan struct{})
+var wg sync.WaitGroup
+var shutdownOnce sync.Once
+var replShutdownOnce sync.Once
 
 func main() {
 
@@ -157,10 +161,7 @@ func main() {
 	//LOGGING
 	go func() {
 		for logMsg := range logChannel {
-			// The \r moves the cursor to the start of the line.
-			// The ANSI clear code \033[K clears from the cursor to the end of the line.
-			fmt.Printf("\r\033[K%s\n", logMsg)
-			fmt.Print("GUFS-Admin> ") // Redraw the prompt
+			fmt.Println(logMsg) // Simple, clean output without ANSI codes
 		}
 	}()
 
@@ -182,44 +183,12 @@ func main() {
 	defer conn.Close()
 
 	//REPL
-	go func() {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("GUFS-Admin> ")
-
-		for {
-			text, _ := reader.ReadString('\n')
-			text = strings.TrimSpace(text)
-			parts := strings.Fields(text)
-
-			if len(parts) == 0 {
-				fmt.Print("GUFS-Admin> ")
-				continue
-			}
-
-			command := parts[0]
-			args := parts[1:]
-
-			switch command {
-			case "announce":
-				if len(args) > 0 {
-					broadcastAnnouncement(conn, strings.Join(args, " "))
-					logChannel <- "Announcement sent."
-				} else {
-					logChannel <- "Usage: announce <message>"
-				}
-			case "quit":
-				logChannel <- "Server shutting down..."
-				close(shutdownChan) // Signal all goroutines to stop
-				return              // Exit the REPL loop
-			default:
-				logChannel <- fmt.Sprintf("Unknown command: %s", command)
-			}
-			fmt.Print("GUFS-Admin> ")
-		}
-	}()
+	wg.Add(1)
+	go startREPL(conn)
 
 	logChannel <- fmt.Sprintf("UDP server listening on %s\n", conn.LocalAddr().String())
 
+	wg.Add(4) // REPL + 3 background go routines
 	// Start the client cleanup goroutine
 	go cleanupDeadClients(conn)
 	// cleanup download sessions
@@ -1183,49 +1152,64 @@ func retransmitTimeouts(conn *net.UDPConn, session *FileDownloadSession, client 
 
 // This function runs forever, cleaning up clients that have timed out.
 func cleanupDeadClients(conn *net.UDPConn) {
+	defer wg.Done()
 	const timeout = 60 * time.Second
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		time.Sleep(30 * time.Second)
+		select {
+		case <-shutdownChan:
+			return
+		case <-ticker.C:
+			clientsMutex.Lock()
+			for addrStr, client := range clients {
+				if time.Since(client.LastHeartbeat) > timeout {
+					// ... existing cleanup logic stays the same ...
+					if client.Username != "" {
+						disconnectMsg := fmt.Sprintf("[Server]: User '%s' has disconnected or timed out.", client.Username)
+						logChannel <- fmt.Sprintf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
 
-		clientsMutex.Lock()
-		for addrStr, client := range clients {
-			if time.Since(client.LastHeartbeat) > timeout {
-				// Announce user disconnect if they had a username
-				if client.Username != "" {
-					disconnectMsg := fmt.Sprintf("[Server]: User '%s' has disconnected or timed out.", client.Username)
-					logChannel <- fmt.Sprintf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
-
-					// Notify other clients
-					for otherAddr, otherClient := range clients {
-						if otherAddr != addrStr && otherClient.IsConnected {
-							secureWriteToUDP(conn, []byte(disconnectMsg), otherClient.Addr, &otherClient)
-							logChannel <- fmt.Sprintf("%s", disconnectMsg)
+						for otherAddr, otherClient := range clients {
+							if otherAddr != addrStr && otherClient.IsConnected {
+								secureWriteToUDP(conn, []byte(disconnectMsg), otherClient.Addr, &otherClient)
+								logChannel <- fmt.Sprintf("%s", disconnectMsg)
+							}
 						}
+					} else {
+						logChannel <- fmt.Sprintf("Client %s timed out. Removing.\n", addrStr)
 					}
-				} else {
-					logChannel <- fmt.Sprintf("Client %s timed out. Removing.\n", addrStr)
+					delete(clients, addrStr)
 				}
-				delete(clients, addrStr)
 			}
+			clientsMutex.Unlock()
 		}
-		clientsMutex.Unlock()
 	}
 }
 
 func cleanupDownloadSessions() {
-	for {
-		time.Sleep(30 * time.Second)
+	defer wg.Done()
 
-		downloadSessionsMutex.Lock()
-		for sessionKey, session := range downloadSessions {
-			if time.Since(session.LastActivity) > 2*time.Minute {
-				logChannel <- fmt.Sprintf("Cleaning up stale download session: %s\n", sessionKey)
-				close(session.AckChan)
-				close(session.Done)
-				delete(downloadSessions, sessionKey)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-shutdownChan:
+			return
+		case <-ticker.C:
+			downloadSessionsMutex.Lock()
+			for sessionKey, session := range downloadSessions {
+				if time.Since(session.LastActivity) > 2*time.Minute {
+					logChannel <- fmt.Sprintf("Cleaning up stale download session: %s\n", sessionKey)
+					close(session.AckChan)
+					close(session.Done)
+					delete(downloadSessions, sessionKey)
+				}
 			}
+			downloadSessionsMutex.Unlock()
 		}
-		downloadSessionsMutex.Unlock()
 	}
 }
 
@@ -1340,23 +1324,27 @@ func trimTrailingNewline(s string) string {
 }
 
 func sendServerHeartbeats(conn *net.UDPConn) {
-	// Send a heartbeat every 15 seconds
+	defer wg.Done()
+	//send heartebeat every 15 seconds
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		clientsMutex.Lock()
-		// Create a copy of the clients map to avoid holding the lock while writing to the network
-		clientsCopy := make(map[string]Client)
-		for k, v := range clients {
-			clientsCopy[k] = v
-		}
-		clientsMutex.Unlock()
+	for {
+		select {
+		case <-shutdownChan:
+			return
+		case <-ticker.C:
+			clientsMutex.Lock()
+			clientsCopy := make(map[string]Client)
+			for k, v := range clients {
+				clientsCopy[k] = v
+			}
+			clientsMutex.Unlock()
 
-		for _, client := range clientsCopy {
-			if client.IsConnected {
-				// We don't need a payload, just the command byte is enough
-				secureWriteToUDP(conn, []byte{CMD_SERVER_HEARTBEAT}, client.Addr, &client)
+			for _, client := range clientsCopy {
+				if client.IsConnected {
+					secureWriteToUDP(conn, []byte{CMD_SERVER_HEARTBEAT}, client.Addr, &client)
+				}
 			}
 		}
 	}
@@ -1386,4 +1374,326 @@ func broadcastAnnouncement(conn *net.UDPConn, message string) {
 			secureWriteToUDP(conn, announcementPacket, client.Addr, &client)
 		}
 	}
+}
+
+func startREPL(conn *net.UDPConn) {
+	defer wg.Done()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("GUFS-Admin> ")
+
+	for {
+		select {
+		case <-replShutdown:
+			return
+		default:
+		}
+
+		text, err := reader.ReadString('\n')
+		if err != nil {
+			if err.Error() == "EOF" {
+				logChannel <- "REPL: EOF received, shutting down..."
+				gracefulShutdown()
+				return
+			}
+			logChannel <- fmt.Sprintf("REPL: Error reading input: %v", err)
+			continue
+		}
+
+		text = strings.TrimSpace(text)
+		if text == "" {
+			fmt.Print("GUFS-Admin> ")
+			continue
+		}
+
+		parts := strings.Fields(text)
+		command := strings.ToLower(parts[0])
+		args := parts[1:]
+
+		// Execute command and handle prompt afterwards
+		executeREPLCommand(conn, command, args)
+
+		// Give log messages time to print, then show prompt
+		time.Sleep(100 * time.Millisecond)
+		fmt.Print("GUFS-Admin> ")
+	}
+}
+
+func executeREPLCommand(conn *net.UDPConn, command string, args []string) {
+	switch command {
+	case "announce":
+		if len(args) > 0 {
+			message := strings.Join(args, " ")
+			broadcastAnnouncement(conn, message)
+			logChannel <- fmt.Sprintf("Announcement sent: %s", message)
+		} else {
+			logChannel <- "Usage: announce <message>"
+		}
+
+	case "status":
+		showServerStatus()
+
+	case "clients", "list":
+		showConnectedClients()
+
+	case "kick":
+		if len(args) > 0 {
+			kickClient(conn, args[0])
+		} else {
+			logChannel <- "Usage: kick <username>"
+		}
+
+	case "stats":
+		showServerStats()
+
+	case "files":
+		showUploadedFiles()
+
+	case "db":
+		if len(args) > 0 {
+			handleDBCommand(args)
+		} else {
+			logChannel <- "Usage: db <list|get|set|delete> [key] [value]"
+		}
+
+	case "help":
+		showREPLHelp()
+
+	case "quit", "exit":
+		logChannel <- "Server shutting down..."
+		gracefulShutdown()
+
+	default:
+		logChannel <- fmt.Sprintf("Unknown command: %s (type 'help' for available commands)", command)
+	}
+}
+
+func showServerStatus() {
+	uptime := time.Since(serverStartTime).Round(time.Second)
+
+	clientsMutex.Lock()
+	connectedCount := 0
+	for _, client := range clients {
+		if client.IsConnected {
+			connectedCount++
+		}
+	}
+	totalClients := len(clients)
+	clientsMutex.Unlock()
+
+	dbMutex.Lock()
+	dbSize := len(database)
+	dbMutex.Unlock()
+
+	transfersMutex.Lock()
+	activeTransferCount := len(activeTransfers)
+	transfersMutex.Unlock()
+
+	downloadSessionsMutex.Lock()
+	downloadSessionCount := len(downloadSessions)
+	downloadSessionsMutex.Unlock()
+
+	logChannel <- fmt.Sprintf("=== Server Status ===")
+	logChannel <- fmt.Sprintf("Uptime: %s", uptime)
+	logChannel <- fmt.Sprintf("Connected clients: %d/%d", connectedCount, totalClients)
+	logChannel <- fmt.Sprintf("Database entries: %d/%d", dbSize, DB_MAX_SIZE)
+	logChannel <- fmt.Sprintf("Active transfers: %d", activeTransferCount)
+	logChannel <- fmt.Sprintf("Download sessions: %d", downloadSessionCount)
+}
+
+func showConnectedClients() {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
+
+	logChannel <- "=== Connected Clients ==="
+	if len(clients) == 0 {
+		logChannel <- "No clients connected"
+		return
+	}
+
+	for addr, client := range clients {
+		if client.IsConnected {
+			username := client.Username
+			if username == "" {
+				username = "<no username>"
+			}
+			lastSeen := time.Since(client.LastHeartbeat).Round(time.Second)
+			encryption := "No"
+			if client.IsEncrypted {
+				encryption = "Yes"
+			}
+			logChannel <- fmt.Sprintf("• %s (%s) - Last heartbeat: %s ago - Encrypted: %s",
+				username, addr, lastSeen, encryption)
+		}
+	}
+}
+
+func kickClient(conn *net.UDPConn, username string) {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
+
+	for addr, client := range clients {
+		if client.IsConnected && client.Username == username {
+			// Send disconnect message to client
+			secureWriteToUDP(conn, []byte{CMD_DISCONNECT}, client.Addr, &client)
+
+			// Remove from clients map
+			delete(clients, addr)
+
+			// Notify other clients
+			kickMsg := fmt.Sprintf("[Server]: %s was kicked by admin.", username)
+			for _, otherClient := range clients {
+				if otherClient.IsConnected {
+					secureWriteToUDP(conn, []byte(kickMsg), otherClient.Addr, &otherClient)
+				}
+			}
+
+			logChannel <- fmt.Sprintf("Kicked user: %s (%s)", username, addr)
+			return
+		}
+	}
+	logChannel <- fmt.Sprintf("User not found: %s", username)
+}
+
+func showServerStats() {
+	// Calculate file storage usage
+	files, _ := os.ReadDir("./uploads")
+	var totalSize int64
+	fileCount := 0
+
+	for _, file := range files {
+		if !file.IsDir() {
+			info, err := file.Info()
+			if err == nil {
+				totalSize += info.Size()
+				fileCount++
+			}
+		}
+	}
+
+	logChannel <- fmt.Sprintf("=== Server Statistics ===")
+	logChannel <- fmt.Sprintf("Files stored: %d", fileCount)
+	logChannel <- fmt.Sprintf("Storage used: %.2f MB", float64(totalSize)/1024/1024)
+	logChannel <- fmt.Sprintf("Server version: %s", SERVER_VERSION)
+}
+
+func showUploadedFiles() {
+	files, err := os.ReadDir("./uploads")
+	if err != nil {
+		logChannel <- fmt.Sprintf("Error reading uploads directory: %v", err)
+		return
+	}
+
+	logChannel <- "=== Uploaded Files ==="
+	if len(files) == 0 {
+		logChannel <- "No files uploaded"
+		return
+	}
+
+	for _, file := range files {
+		if !file.IsDir() {
+			info, err := file.Info()
+			if err == nil {
+				size := float64(info.Size()) / 1024 // KB
+				logChannel <- fmt.Sprintf("• %s (%.1f KB) - %s",
+					file.Name(), size, info.ModTime().Format("2006-01-02 15:04:05"))
+			}
+		}
+	}
+}
+
+func handleDBCommand(args []string) {
+	if len(args) == 0 {
+		return
+	}
+
+	subcommand := strings.ToLower(args[0])
+	switch subcommand {
+	case "list":
+		dbMutex.Lock()
+		if len(database) == 0 {
+			logChannel <- "Database is empty"
+		} else {
+			logChannel <- "=== Database Keys ==="
+			for key := range database {
+				logChannel <- fmt.Sprintf("• %s", key)
+			}
+		}
+		dbMutex.Unlock()
+
+	case "get":
+		if len(args) < 2 {
+			logChannel <- "Usage: db get <key>"
+			return
+		}
+		key := args[1]
+		dbMutex.Lock()
+		value, exists := database[key]
+		dbMutex.Unlock()
+
+		if exists {
+			logChannel <- fmt.Sprintf("Key '%s': %s", key, string(value))
+		} else {
+			logChannel <- fmt.Sprintf("Key '%s' not found", key)
+		}
+
+	case "delete", "del":
+		if len(args) < 2 {
+			logChannel <- "Usage: db delete <key>"
+			return
+		}
+		key := args[1]
+		dbMutex.Lock()
+		_, exists := database[key]
+		if exists {
+			delete(database, key)
+			logChannel <- fmt.Sprintf("Deleted key: %s", key)
+		} else {
+			logChannel <- fmt.Sprintf("Key '%s' not found", key)
+		}
+		dbMutex.Unlock()
+
+	default:
+		logChannel <- "Usage: db <list|get|delete> [key]"
+	}
+}
+
+func showREPLHelp() {
+	logChannel <- "=== Admin Commands ==="
+	logChannel <- "announce <message>  - Send announcement to all clients"
+	logChannel <- "status             - Show server status"
+	logChannel <- "clients, list      - Show connected clients"
+	logChannel <- "kick <username>    - Disconnect a user"
+	logChannel <- "stats             - Show server statistics"
+	logChannel <- "files             - Show uploaded files"
+	logChannel <- "db <cmd> [args]   - Database operations (list|get|delete)"
+	logChannel <- "help              - Show this help"
+	logChannel <- "quit, exit        - Shutdown server"
+}
+
+func gracefulShutdown() {
+	// Use sync.Once to ensure channels are only closed once
+	shutdownOnce.Do(func() {
+		close(shutdownChan)
+	})
+
+	replShutdownOnce.Do(func() {
+		close(replShutdown)
+	})
+
+	// Give goroutines time to cleanup
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		logChannel <- "Graceful shutdown complete"
+	case <-time.After(5 * time.Second):
+		logChannel <- "Shutdown timeout reached, forcing exit"
+	}
+
+	os.Exit(0)
 }
