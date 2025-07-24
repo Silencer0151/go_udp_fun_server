@@ -27,6 +27,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"flag"
@@ -45,14 +46,15 @@ const (
 	SERVER_VERSION = "GUFS v0.9.3"
 
 	// General Commands
-	CMD_BROADCAST    byte = 0x02
-	CMD_STATUS       byte = 0x03
-	CMD_PROCESS_DATA byte = 0x04
-	CMD_TIME         byte = 0x05
-	CMD_SET_USERNAME byte = 0x06
-	CMD_ECHO         byte = 0x07
-	CMD_LIST_USERS   byte = 0x08
-	CMD_PRIVATE_MSG  byte = 0x09
+	CMD_BROADCAST           byte = 0x02
+	CMD_STATUS              byte = 0x03
+	CMD_PROCESS_DATA        byte = 0x04
+	CMD_TIME                byte = 0x05
+	CMD_SET_USERNAME        byte = 0x06
+	CMD_ECHO                byte = 0x07
+	CMD_LIST_USERS          byte = 0x08
+	CMD_PRIVATE_MSG         byte = 0x09
+	CMD_SERVER_ANNOUNCEMENT byte = 0x50
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -140,9 +142,10 @@ type FileDownloadSession struct {
 	Mutex        sync.Mutex
 }
 
-// Add these global variables
 var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
 var downloadSessionsMutex = &sync.Mutex{}
+var logChannel = make(chan string, 50)
+var shutdownChan = make(chan struct{})
 
 func main() {
 
@@ -151,10 +154,20 @@ func main() {
 	port := flag.String("port", "8080", "The port to listen on.")
 	flag.Parse()
 
+	//LOGGING
+	go func() {
+		for logMsg := range logChannel {
+			// The \r moves the cursor to the start of the line.
+			// The ANSI clear code \033[K clears from the cursor to the end of the line.
+			fmt.Printf("\r\033[K%s\n", logMsg)
+			fmt.Print("GUFS-Admin> ") // Redraw the prompt
+		}
+	}()
+
 	addrStr := *ip + ":" + *port
 	addr, err := net.ResolveUDPAddr("udp", addrStr)
 	if err != nil {
-		fmt.Println("Error resolving address:", err)
+		logChannel <- fmt.Sprintf("Error resolving address: %s", err)
 		os.Exit(1)
 	}
 
@@ -163,11 +176,49 @@ func main() {
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		fmt.Println("Error listening:", err)
+		logChannel <- fmt.Sprintf("Error listening: %s", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
-	fmt.Printf("UDP server listening on %s\n", conn.LocalAddr().String())
+
+	//REPL
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("GUFS-Admin> ")
+
+		for {
+			text, _ := reader.ReadString('\n')
+			text = strings.TrimSpace(text)
+			parts := strings.Fields(text)
+
+			if len(parts) == 0 {
+				fmt.Print("GUFS-Admin> ")
+				continue
+			}
+
+			command := parts[0]
+			args := parts[1:]
+
+			switch command {
+			case "announce":
+				if len(args) > 0 {
+					broadcastAnnouncement(conn, strings.Join(args, " "))
+					logChannel <- "Announcement sent."
+				} else {
+					logChannel <- "Usage: announce <message>"
+				}
+			case "quit":
+				logChannel <- "Server shutting down..."
+				close(shutdownChan) // Signal all goroutines to stop
+				return              // Exit the REPL loop
+			default:
+				logChannel <- fmt.Sprintf("Unknown command: %s", command)
+			}
+			fmt.Print("GUFS-Admin> ")
+		}
+	}()
+
+	logChannel <- fmt.Sprintf("UDP server listening on %s\n", conn.LocalAddr().String())
 
 	// Start the client cleanup goroutine
 	go cleanupDeadClients(conn)
@@ -178,9 +229,28 @@ func main() {
 
 	buffer := make([]byte, 8192)
 	for {
+		select {
+		case <-shutdownChan:
+			// The 'quit' command was used.
+			logChannel <- "Closing UDP listener..."
+			conn.Close() // Close the connection to stop blocking reads.
+			logChannel <- "Server shutdown complete."
+			return // Exit the main goroutine.
+		default:
+			// No shutdown signal, proceed with reading from the connection.
+		}
+
+		// We must set a read deadline. This makes the ReadFromUDP call non-blocking
+		// and allows the 'select' statement to check for the shutdown signal periodically.
+		conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 		n, clientAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			fmt.Println("Error reading from UDP:", err)
+			// If the error is a timeout, it's expected. We just continue the loop.
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			// If the error is not a timeout, it could be a real issue or the connection closing.
+			logChannel <- fmt.Sprintf("Error reading from UDP: %v", err)
 			continue
 		}
 
@@ -188,7 +258,7 @@ func main() {
 		data := make([]byte, n)
 		copy(data, buffer[:n])
 
-		// NEW: Check if this client has encryption enabled and try to decrypt
+		//Check if this client has encryption enabled and try to decrypt
 		clientsMutex.Lock()
 		client, exists := clients[clientAddr.String()]
 		clientsMutex.Unlock()
@@ -198,7 +268,7 @@ func main() {
 			if err != nil {
 				// Decryption failed - might be an unencrypted handshake packet
 				// Log it but continue with original data
-				fmt.Printf("Decryption failed for %s: %v (might be unencrypted)\n", clientAddr, err)
+				logChannel <- fmt.Sprintf("Decryption failed for %s: %v (might be unencrypted)\n", clientAddr, err)
 			} else {
 				// Successfully decrypted, use the decrypted data
 				data = decrypted
@@ -345,7 +415,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	// If the command is not a connection command and the client is not connected, reject it.
 	if !isConnectCmd && (!isKnown || !client.IsConnected) {
 		secureWriteToUDP(conn, []byte("The server did not understand your request, try 'protocol' for more information."), addr, &client)
-		fmt.Printf("Rejected command from unconnected client %s - '%s'\n", addr, string(data))
+		logChannel <- fmt.Sprintf("Rejected command from unconnected client %s - '%s'\n", addr, string(data))
 		return
 	}
 
@@ -353,7 +423,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	switch command {
 	case CMD_PING:
 		secureWriteToUDP(conn, []byte{CMD_PONG}, addr, &client)
-		fmt.Printf("Sent PONG to %s\n", client.Username)
+		logChannel <- fmt.Sprintf("Sent PONG to %s\n", client.Username)
 
 	case CMD_TIME:
 		serverTime := time.Now().Format(time.RFC3339)
@@ -388,7 +458,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			client.Username = username
 			clients[addrStr] = client
 
-			fmt.Printf("Set username for %s to '%s'\n", addr, username)
+			logChannel <- fmt.Sprintf("Set username for %s to '%s'\n", addr, username)
 			secureWriteToUDP(conn, []byte("Username set successfully!"), addr, &client)
 
 			if oldUsername == "" {
@@ -438,7 +508,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		}
 
 		messageToBroadcast := fmt.Sprintf("[%s]: %s", sender.Username, string(payload))
-		fmt.Printf("Broadcasting from %s: %s\n", sender.Username, string(payload))
+		logChannel <- fmt.Sprintf("Broadcasting from %s: %s\n", sender.Username, string(payload))
 
 		for _, otherClient := range clients {
 			if otherClient.Addr.String() == addrStr || !otherClient.IsConnected {
@@ -545,7 +615,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		database[key] = []byte(value)
 		dbMutex.Unlock() // Unlock immediately after DB operation.
 
-		fmt.Printf("Stored key '%s' for client %s\n", key, addr)
+		logChannel <- fmt.Sprintf("Stored key '%s' for client %s\n", key, addr)
 		secureWriteToUDP(conn, []byte("Value stored successfully."), addr, &client)
 
 		// Broadcast that a value was set
@@ -605,7 +675,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		// Create a unique ID for this transfer session
 		transferID := fmt.Sprintf("%s-%s", addr.String(), filename)
 
-		fmt.Printf("Initiating file transfer '%s' (%d chunks) for ID %s\n", filename, totalChunks, transferID)
+		logChannel <- fmt.Sprintf("Initiating file transfer '%s' (%d chunks) for ID %s\n", filename, totalChunks, transferID)
 
 		// Create and store the state for this new transfer
 		transfersMutex.Lock()
@@ -650,14 +720,14 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 			if time.Since(transfer.LastProgress) > time.Second {
 				progress := (len(transfer.ReceivedChunks) * 100) / int(transfer.TotalChunks)
-				fmt.Printf("Receiving '%s'... %d%% (%d/%d chunks)\n", transfer.Filename, progress, len(transfer.ReceivedChunks), transfer.TotalChunks)
+				logChannel <- fmt.Sprintf("Receiving '%s'... %d%% (%d/%d chunks)\n", transfer.Filename, progress, len(transfer.ReceivedChunks), transfer.TotalChunks)
 				transfer.LastProgress = time.Now()
 			}
 		}
 
 		// Check if the transfer is complete
 		if uint32(len(transfer.ReceivedChunks)) == transfer.TotalChunks {
-			fmt.Printf("Received all %d chunks for file '%s'. Assembling...\n", transfer.TotalChunks, transfer.Filename)
+			logChannel <- fmt.Sprintf("Received all %d chunks for file '%s'. Assembling...\n", transfer.TotalChunks, transfer.Filename)
 			go assembleFile(transfer)           // Assemble in a new goroutine to not block
 			delete(activeTransfers, transferID) // Clean up the completed transfer
 		}
@@ -766,13 +836,13 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			} else {
 				secureWriteToUDP(conn, []byte("Error: Could not delete file."), addr, &client)
 			}
-			fmt.Printf("Failed attempt to delete file '%s' by %s: %v\n", filename, client.Username, err)
+			logChannel <- fmt.Sprintf("Failed attempt to delete file '%s' by %s: %v\n", filename, client.Username, err)
 			return
 		}
 
 		successMsg := fmt.Sprintf("File '%s' was successfully deleted.", filename)
 		secureWriteToUDP(conn, []byte(successMsg), addr, &client)
-		fmt.Printf("User '%s' deleted file '%s'\n", client.Username, filename)
+		logChannel <- fmt.Sprintf("User '%s' deleted file '%s'\n", client.Username, filename)
 
 		// Announce the deletion to all other connected clients
 		broadcastMsg := fmt.Sprintf("[Server]: %s deleted the file '%s'.", client.Username, filename)
@@ -827,13 +897,13 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		if clientToConfirm, ok := clients[addrStr]; ok && clientToConfirm.EncMgr != nil && clientToConfirm.EncMgr.IsReady() {
 			clientToConfirm.IsEncrypted = true
 			clients[addrStr] = clientToConfirm
-			fmt.Printf("Encryption enabled for client %s\n", addrStr)
+			logChannel <- fmt.Sprintf("Encryption enabled for client %s\n", addrStr)
 			conn.WriteToUDP([]byte{CMD_KEY_CONFIRM}, addr) // UNENCRYPTED - this is handshake confirmation
 		}
 		clientsMutex.Unlock()
 
 	case CMD_CONNECT_SYN:
-		fmt.Printf("Received SYN from %s, sending SYN-ACK\n", addrStr)
+		logChannel <- fmt.Sprintf("Received SYN from %s, sending SYN-ACK\n", addrStr)
 
 		// add client in a non-connected state
 		clientsMutex.Lock()
@@ -852,7 +922,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			client.IsConnected = true
 			client.LastHeartbeat = time.Now() //start timer for heartbeat
 			clients[addrStr] = client
-			fmt.Printf("Received ACK from %s. Connection established.\n", addrStr)
+			logChannel <- fmt.Sprintf("Received ACK from %s. Connection established.\n", addrStr)
 		}
 		clientsMutex.Unlock()
 
@@ -881,7 +951,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 		// Remove the client from the map. This is the core of the disconnect.
 		delete(clients, addrStr)
-		fmt.Printf("Client %s (%s) has disconnected.\n", disconnectedUsername, addrStr)
+		logChannel <- fmt.Sprintf("Client %s (%s) has disconnected.\n", disconnectedUsername, addrStr)
 
 		// Prepare the broadcast message to notify other users.
 		disconnectMsg := fmt.Sprintf("[Server]: %s has disconnected.", disconnectedUsername)
@@ -898,7 +968,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	default:
 		errMsg := fmt.Sprintf("Unknown command byte: 0x%x. Type 'help' for more information.", command)
 		secureWriteToUDP(conn, []byte(errMsg), addr, &client)
-		fmt.Printf("received unknown packet from client: %s - 0x%x\n", addrStr, command)
+		logChannel <- fmt.Sprintf("received unknown packet from client: %s - 0x%x\n", addrStr, command)
 	}
 }
 
@@ -975,7 +1045,7 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 	startPacket := append([]byte{CMD_FILE_START}, startPayload...)
 	secureWriteToUDP(conn, startPacket, addr, &client)
 
-	fmt.Printf("Starting sliding window file send '%s' to %s (%d chunks)\n", filename, addr.String(), totalChunks)
+	logChannel <- fmt.Sprintf("Starting sliding window file send '%s' to %s (%d chunks)\n", filename, addr.String(), totalChunks)
 
 	// Start ACK processor goroutine
 	go processAcks(session)
@@ -1000,7 +1070,7 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 		// Progress reporting remains the same
 		progress := (session.WindowStart * 100) / totalChunks
 		if time.Since(lastProgressTime) > 2*time.Second {
-			fmt.Printf("Sending '%s': %d%% (%d/%d chunks)\n", filename, progress, session.WindowStart, totalChunks)
+			logChannel <- fmt.Sprintf("Sending '%s': %d%% (%d/%d chunks)\n", filename, progress, session.WindowStart, totalChunks)
 			lastProgressTime = time.Now()
 		}
 
@@ -1025,7 +1095,7 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	fmt.Printf("Completed sliding window file send '%s' to %s\n", filename, addr.String())
+	logChannel <- fmt.Sprintf("Completed sliding window file send '%s' to %s\n", filename, addr.String())
 }
 
 func sendChunk(conn *net.UDPConn, session *FileDownloadSession, seqNum int, client *Client) {
@@ -1107,7 +1177,7 @@ func retransmitTimeouts(conn *net.UDPConn, session *FileDownloadSession, client 
 	}
 
 	if retransmitCount > 0 {
-		fmt.Printf("Retransmitted %d chunks for %s\n", retransmitCount, session.Filename)
+		logChannel <- fmt.Sprintf("Retransmitted %d chunks for %s\n", retransmitCount, session.Filename)
 	}
 }
 
@@ -1123,17 +1193,17 @@ func cleanupDeadClients(conn *net.UDPConn) {
 				// Announce user disconnect if they had a username
 				if client.Username != "" {
 					disconnectMsg := fmt.Sprintf("[Server]: User '%s' has disconnected or timed out.", client.Username)
-					fmt.Printf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
+					logChannel <- fmt.Sprintf("Client %s (%s) timed out. Removing.\n", client.Username, addrStr)
 
 					// Notify other clients
 					for otherAddr, otherClient := range clients {
 						if otherAddr != addrStr && otherClient.IsConnected {
 							secureWriteToUDP(conn, []byte(disconnectMsg), otherClient.Addr, &otherClient)
-							fmt.Printf("%s", disconnectMsg)
+							logChannel <- fmt.Sprintf("%s", disconnectMsg)
 						}
 					}
 				} else {
-					fmt.Printf("Client %s timed out. Removing.\n", addrStr)
+					logChannel <- fmt.Sprintf("Client %s timed out. Removing.\n", addrStr)
 				}
 				delete(clients, addrStr)
 			}
@@ -1149,7 +1219,7 @@ func cleanupDownloadSessions() {
 		downloadSessionsMutex.Lock()
 		for sessionKey, session := range downloadSessions {
 			if time.Since(session.LastActivity) > 2*time.Minute {
-				fmt.Printf("Cleaning up stale download session: %s\n", sessionKey)
+				logChannel <- fmt.Sprintf("Cleaning up stale download session: %s\n", sessionKey)
 				close(session.AckChan)
 				close(session.Done)
 				delete(downloadSessions, sessionKey)
@@ -1167,7 +1237,7 @@ func assembleFile(transfer *FileTransfer) {
 	// Create the destination file
 	file, err := os.Create(filePath)
 	if err != nil {
-		fmt.Printf("Error creating file %s: %v\n", filePath, err)
+		logChannel <- fmt.Sprintf("Error creating file %s: %v\n", filePath, err)
 		return
 	}
 	defer file.Close()
@@ -1176,7 +1246,7 @@ func assembleFile(transfer *FileTransfer) {
 	for i := uint32(0); i < transfer.TotalChunks; i++ {
 		chunk, ok := transfer.ReceivedChunks[i]
 		if !ok {
-			fmt.Printf("Error: Missing chunk #%d for file %s. Aborting assembly.\n", i, transfer.Filename)
+			logChannel <- fmt.Sprintf("Error: Missing chunk #%d for file %s. Aborting assembly.\n", i, transfer.Filename)
 			// In a real-world scenario, you might request the missing chunk again.
 			// For now, we'll just abort.
 			file.Close()
@@ -1185,12 +1255,12 @@ func assembleFile(transfer *FileTransfer) {
 		}
 		_, err := file.Write(chunk)
 		if err != nil {
-			fmt.Printf("Error writing chunk #%d to file %s: %v\n", i, transfer.Filename, err)
+			logChannel <- fmt.Sprintf("Error writing chunk #%d to file %s: %v\n", i, transfer.Filename, err)
 			return
 		}
 	}
 
-	fmt.Printf("✅ Successfully assembled and saved file: %s\n", filePath)
+	logChannel <- fmt.Sprintf("✅ Successfully assembled and saved file: %s\n", filePath)
 }
 
 func resendMissingChunks(conn *net.UDPConn, addr *net.UDPAddr, filename string, missingChunksPayload []byte) {
@@ -1199,7 +1269,7 @@ func resendMissingChunks(conn *net.UDPConn, addr *net.UDPAddr, filename string, 
 	fileData, err := os.ReadFile(filePath)
 	if err != nil {
 		// Can't do much if the file is gone, so we just log and exit.
-		fmt.Printf("Could not re-read file %s for re-sending chunks.\n", filename)
+		logChannel <- fmt.Sprintf("Could not re-read file %s for re-sending chunks.\n", filename)
 		return
 	}
 
@@ -1209,7 +1279,7 @@ func resendMissingChunks(conn *net.UDPConn, addr *net.UDPAddr, filename string, 
 	clientsMutex.Unlock()
 
 	if !exists {
-		fmt.Printf("Client not found for chunk resend: %s\n", addr.String())
+		logChannel <- fmt.Sprintf("Client not found for chunk resend: %s\n", addr.String())
 		return
 	}
 
@@ -1296,10 +1366,24 @@ func secureWriteToUDP(conn *net.UDPConn, data []byte, addr *net.UDPAddr, client 
 	if client != nil && client.IsEncrypted && client.EncMgr != nil && client.EncMgr.IsReady() {
 		encrypted, err := client.EncMgr.Encrypt(data)
 		if err != nil {
-			fmt.Printf("Encryption failed for %s: %v\n", addr, err)
+			logChannel <- fmt.Sprintf("Encryption failed for %s: %v\n", addr, err)
 			return conn.WriteToUDP(data, addr) // Fallback to unencrypted
 		}
 		return conn.WriteToUDP(encrypted, addr)
 	}
 	return conn.WriteToUDP(data, addr)
+}
+
+func broadcastAnnouncement(conn *net.UDPConn, message string) {
+	clientsMutex.Lock()
+	defer clientsMutex.Unlock()
+
+	announcementPacket := append([]byte{CMD_SERVER_ANNOUNCEMENT}, []byte(message)...)
+
+	for _, client := range clients {
+		if client.IsConnected {
+			// Use the existing secure write function to handle encryption automatically
+			secureWriteToUDP(conn, announcementPacket, client.Addr, &client)
+		}
+	}
 }

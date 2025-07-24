@@ -18,14 +18,15 @@ import (
 
 const (
 	// General Commands
-	CMD_BROADCAST    byte = 0x02
-	CMD_STATUS       byte = 0x03
-	CMD_PROCESS_DATA byte = 0x04
-	CMD_TIME         byte = 0x05
-	CMD_SET_USERNAME byte = 0x06
-	CMD_ECHO         byte = 0x07
-	CMD_LIST_USERS   byte = 0x08
-	CMD_PRIVATE_MSG  byte = 0x09
+	CMD_BROADCAST           byte = 0x02
+	CMD_STATUS              byte = 0x03
+	CMD_PROCESS_DATA        byte = 0x04
+	CMD_TIME                byte = 0x05
+	CMD_SET_USERNAME        byte = 0x06
+	CMD_ECHO                byte = 0x07
+	CMD_LIST_USERS          byte = 0x08
+	CMD_PRIVATE_MSG         byte = 0x09
+	CMD_SERVER_ANNOUNCEMENT byte = 0x50
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -289,6 +290,8 @@ func (c *Client) handleServerMessages() {
 				}
 				c.downloadMutex.Unlock()
 			}
+		case CMD_SERVER_ANNOUNCEMENT:
+			fmt.Printf("\r[SERVER ANNOUNCEMENT]: %s\n> ", string(payload))
 		case CMD_SERVER_HEARTBEAT:
 			// This is the server's liveness check. We've already updated the
 			// lastServerActivity timestamp just by receiving the packet.
