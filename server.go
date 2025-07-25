@@ -160,7 +160,7 @@ func main() {
 	//LOGGING
 	go func() {
 		for logMsg := range logChannel {
-			fmt.Println(logMsg) // Simple, clean output without ANSI codes
+			fmt.Print(logMsg) // Simple, clean output without ANSI codes (single line)
 		}
 	}()
 
