@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.9.3
+// Version: 0.9.5
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -17,7 +17,6 @@
 
 /*
 	-- TODO LIST --
-	- Server announcement capability
 	- Message history (last 10 or so messages sent to new user)
 	- Chat rooms (create, leave, set topic)
 	- Basic user authentication (hashed password on a simple db)
@@ -43,7 +42,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.9.3"
+	SERVER_VERSION = "GUFS v0.9.5"
 
 	// General Commands
 	CMD_BROADCAST           byte = 0x02
@@ -287,6 +286,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 0x47 | CMD_FILE_DELETE   | (no payload) 
+0x50 | CMD_SERVER_ANNOUNCEMENT | string(message) 
 
 [Database]
 0x20 | DB_STORE      | key=value
@@ -319,7 +319,7 @@ Notes:
 
 func getHelpText() string {
 	return `
---- GUFS Help (v0.9.3) ---
+--- GUFS Help (v0.9.5) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 

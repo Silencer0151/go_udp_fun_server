@@ -209,6 +209,7 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x45` | FILE_REQUEST_CHUNKS | [filename][4B seq1][4B seq2]... | Client requests specific missing chunks. |
 | `0x46` | CMD_FILE_DOWNLOAD_ACK | None | File download acknowledgement | 
 | `0x47` | CMD_FILE_DELETE   | None | Deletes file on server | 
+| `0x50` | CMD_SERVER_ANNOUNCEMENT | `string(message)` | Server announcement  to clients |
 
 ### File Transfer Protocol
 
