@@ -167,7 +167,7 @@ func main() {
 	addrStr := *ip + ":" + *port
 	addr, err := net.ResolveUDPAddr("udp", addrStr)
 	if err != nil {
-		logChannel <- fmt.Sprintf("Error resolving address: %s", err)
+		logChannel <- fmt.Sprintf("Error resolving address: %s\n", err)
 		os.Exit(1)
 	}
 
@@ -176,7 +176,7 @@ func main() {
 
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		logChannel <- fmt.Sprintf("Error listening: %s", err)
+		logChannel <- fmt.Sprintf("Error listening: %s\n", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
@@ -200,9 +200,9 @@ func main() {
 		select {
 		case <-shutdownChan:
 			// The 'quit' command was used.
-			logChannel <- "Closing UDP listener..."
+			logChannel <- "Closing UDP listener...\n"
 			conn.Close() // Close the connection to stop blocking reads.
-			logChannel <- "Server shutdown complete."
+			logChannel <- "Server shutdown complete.\n"
 			return // Exit the main goroutine.
 		default:
 			// No shutdown signal, proceed with reading from the connection.
@@ -218,7 +218,7 @@ func main() {
 				continue
 			}
 			// If the error is not a timeout, it could be a real issue or the connection closing.
-			logChannel <- fmt.Sprintf("Error reading from UDP: %v", err)
+			logChannel <- fmt.Sprintf("Error reading from UDP: %v\n", err)
 			continue
 		}
 
@@ -318,8 +318,8 @@ Notes:
 }
 
 func getHelpText() string {
-	return `
---- GUFS Help (v0.9.5) ---
+	return fmt.Sprintf(`
+--- GUFS Help (%s) ---
 Usage: Type a message to broadcast, or use /<command> for special actions.
 Example: /username Alice
 
@@ -329,8 +329,8 @@ Example: /username Alice
 [Messaging]
 /username <name>       Set your display name.
 /echo <message>        Server repeats a message back to you.
-/users				   Server sends list of connected client usernames.
-/msg <username>	<message> Direct message user connected to the server.
+/users                 Server sends list of connected client usernames.
+/msg <username> <message> Direct message user connected to the server.
 
 [Server Info]
 /help                  Show this help message.
@@ -338,7 +338,7 @@ Example: /username Alice
 /status                Get server uptime and client count.
 /time                  Get the current server time.
 /reverse <message>     Server reverses a string for you.
-/ping				   Get ping from server.
+/ping                  Get ping from server.
 
 [Key-Value Database]
 /store <key=value>     Store a value in the database.
@@ -349,8 +349,8 @@ Example: /username Alice
 /send <local_filepath> Upload a file to the server.
 /get <filename>        Download a file from the server.
 /listfiles             List all available files on the server.
-/delete <filename>	   Deletes specified file on the server.
-`
+/delete <filename>     Deletes specified file on the server.
+`, SERVER_VERSION)
 }
 
 func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
@@ -1392,11 +1392,11 @@ func startREPL(conn *net.UDPConn) {
 		text, err := reader.ReadString('\n')
 		if err != nil {
 			if err.Error() == "EOF" {
-				logChannel <- "REPL: EOF received, shutting down..."
+				logChannel <- "REPL: EOF received, shutting down...\n"
 				gracefulShutdown()
 				return
 			}
-			logChannel <- fmt.Sprintf("REPL: Error reading input: %v", err)
+			logChannel <- fmt.Sprintf("REPL: Error reading input: %v\n", err)
 			continue
 		}
 
@@ -1425,9 +1425,9 @@ func executeREPLCommand(conn *net.UDPConn, command string, args []string) {
 		if len(args) > 0 {
 			message := strings.Join(args, " ")
 			broadcastAnnouncement(conn, message)
-			logChannel <- fmt.Sprintf("Announcement sent: %s", message)
+			logChannel <- fmt.Sprintf("Announcement sent: %s\n", message)
 		} else {
-			logChannel <- "Usage: announce <message>"
+			logChannel <- "Usage: announce <message>\n"
 		}
 
 	case "status":
@@ -1440,7 +1440,7 @@ func executeREPLCommand(conn *net.UDPConn, command string, args []string) {
 		if len(args) > 0 {
 			kickClient(conn, args[0])
 		} else {
-			logChannel <- "Usage: kick <username>"
+			logChannel <- "Usage: kick <username>\n"
 		}
 
 	case "stats":
@@ -1453,18 +1453,18 @@ func executeREPLCommand(conn *net.UDPConn, command string, args []string) {
 		if len(args) > 0 {
 			handleDBCommand(args)
 		} else {
-			logChannel <- "Usage: db <list|get|set|delete> [key] [value]"
+			logChannel <- "Usage: db <list|get|set|delete> [key] [value]\n"
 		}
 
 	case "help":
 		showREPLHelp()
 
 	case "quit", "exit":
-		logChannel <- "Server shutting down..."
+		logChannel <- "Server shutting down...\n"
 		gracefulShutdown()
 
 	default:
-		logChannel <- fmt.Sprintf("Unknown command: %s (type 'help' for available commands)", command)
+		logChannel <- fmt.Sprintf("Unknown command: %s (type 'help' for available commands)\n", command)
 	}
 }
 
@@ -1493,21 +1493,21 @@ func showServerStatus() {
 	downloadSessionCount := len(downloadSessions)
 	downloadSessionsMutex.Unlock()
 
-	logChannel <- fmt.Sprintf("=== Server Status ===")
-	logChannel <- fmt.Sprintf("Uptime: %s", uptime)
-	logChannel <- fmt.Sprintf("Connected clients: %d/%d", connectedCount, totalClients)
-	logChannel <- fmt.Sprintf("Database entries: %d/%d", dbSize, DB_MAX_SIZE)
-	logChannel <- fmt.Sprintf("Active transfers: %d", activeTransferCount)
-	logChannel <- fmt.Sprintf("Download sessions: %d", downloadSessionCount)
+	logChannel <- fmt.Sprintf("=== Server Status ===\n")
+	logChannel <- fmt.Sprintf("Uptime: %s\n", uptime)
+	logChannel <- fmt.Sprintf("Connected clients: %d/%d\n", connectedCount, totalClients)
+	logChannel <- fmt.Sprintf("Database entries: %d/%d\n", dbSize, DB_MAX_SIZE)
+	logChannel <- fmt.Sprintf("Active transfers: %d\n", activeTransferCount)
+	logChannel <- fmt.Sprintf("Download sessions: %d\n", downloadSessionCount)
 }
 
 func showConnectedClients() {
 	clientsMutex.Lock()
 	defer clientsMutex.Unlock()
 
-	logChannel <- "=== Connected Clients ==="
+	logChannel <- "=== Connected Clients ===\n"
 	if len(clients) == 0 {
-		logChannel <- "No clients connected"
+		logChannel <- "No clients connected\n"
 		return
 	}
 
@@ -1522,7 +1522,7 @@ func showConnectedClients() {
 			if client.IsEncrypted {
 				encryption = "Yes"
 			}
-			logChannel <- fmt.Sprintf("• %s (%s) - Last heartbeat: %s ago - Encrypted: %s",
+			logChannel <- fmt.Sprintf("• %s (%s) - Last heartbeat: %s ago - Encrypted: %s\n",
 				username, addr, lastSeen, encryption)
 		}
 	}
@@ -1548,11 +1548,11 @@ func kickClient(conn *net.UDPConn, username string) {
 				}
 			}
 
-			logChannel <- fmt.Sprintf("Kicked user: %s (%s)", username, addr)
+			logChannel <- fmt.Sprintf("Kicked user: %s (%s)\n", username, addr)
 			return
 		}
 	}
-	logChannel <- fmt.Sprintf("User not found: %s", username)
+	logChannel <- fmt.Sprintf("User not found: %s\n", username)
 }
 
 func showServerStats() {
@@ -1571,22 +1571,22 @@ func showServerStats() {
 		}
 	}
 
-	logChannel <- fmt.Sprintf("=== Server Statistics ===")
-	logChannel <- fmt.Sprintf("Files stored: %d", fileCount)
-	logChannel <- fmt.Sprintf("Storage used: %.2f MB", float64(totalSize)/1024/1024)
-	logChannel <- fmt.Sprintf("Server version: %s", SERVER_VERSION)
+	logChannel <- fmt.Sprintf("=== Server Statistics ===\n")
+	logChannel <- fmt.Sprintf("Files stored: %d\n", fileCount)
+	logChannel <- fmt.Sprintf("Storage used: %.2f MB\n", float64(totalSize)/1024/1024)
+	logChannel <- fmt.Sprintf("Server version: %s\n", SERVER_VERSION)
 }
 
 func showUploadedFiles() {
 	files, err := os.ReadDir("./uploads")
 	if err != nil {
-		logChannel <- fmt.Sprintf("Error reading uploads directory: %v", err)
+		logChannel <- fmt.Sprintf("Error reading uploads directory: %v\n", err)
 		return
 	}
 
-	logChannel <- "=== Uploaded Files ==="
+	logChannel <- "=== Uploaded Files ===\n"
 	if len(files) == 0 {
-		logChannel <- "No files uploaded"
+		logChannel <- "No files uploaded\n"
 		return
 	}
 
@@ -1595,7 +1595,7 @@ func showUploadedFiles() {
 			info, err := file.Info()
 			if err == nil {
 				size := float64(info.Size()) / 1024 // KB
-				logChannel <- fmt.Sprintf("• %s (%.1f KB) - %s",
+				logChannel <- fmt.Sprintf("• %s (%.1f KB) - %s\n",
 					file.Name(), size, info.ModTime().Format("2006-01-02 15:04:05"))
 			}
 		}
@@ -1612,9 +1612,9 @@ func handleDBCommand(args []string) {
 	case "list":
 		dbMutex.Lock()
 		if len(database) == 0 {
-			logChannel <- "Database is empty"
+			logChannel <- "Database is empty\n"
 		} else {
-			logChannel <- "=== Database Keys ==="
+			logChannel <- "=== Database Keys ===\n"
 			for key := range database {
 				logChannel <- fmt.Sprintf("• %s", key)
 			}
@@ -1623,7 +1623,7 @@ func handleDBCommand(args []string) {
 
 	case "get":
 		if len(args) < 2 {
-			logChannel <- "Usage: db get <key>"
+			logChannel <- "Usage: db get <key>\n"
 			return
 		}
 		key := args[1]
@@ -1632,14 +1632,14 @@ func handleDBCommand(args []string) {
 		dbMutex.Unlock()
 
 		if exists {
-			logChannel <- fmt.Sprintf("Key '%s': %s", key, string(value))
+			logChannel <- fmt.Sprintf("Key '%s': %s\n", key, string(value))
 		} else {
-			logChannel <- fmt.Sprintf("Key '%s' not found", key)
+			logChannel <- fmt.Sprintf("Key '%s' not found\n", key)
 		}
 
 	case "delete", "del":
 		if len(args) < 2 {
-			logChannel <- "Usage: db delete <key>"
+			logChannel <- "Usage: db delete <key>\n"
 			return
 		}
 		key := args[1]
@@ -1647,28 +1647,28 @@ func handleDBCommand(args []string) {
 		_, exists := database[key]
 		if exists {
 			delete(database, key)
-			logChannel <- fmt.Sprintf("Deleted key: %s", key)
+			logChannel <- fmt.Sprintf("Deleted key: %s\n", key)
 		} else {
-			logChannel <- fmt.Sprintf("Key '%s' not found", key)
+			logChannel <- fmt.Sprintf("Key '%s' not found\n", key)
 		}
 		dbMutex.Unlock()
 
 	default:
-		logChannel <- "Usage: db <list|get|delete> [key]"
+		logChannel <- "Usage: db <list|get|delete> [key]\n"
 	}
 }
 
 func showREPLHelp() {
-	logChannel <- "=== Admin Commands ==="
-	logChannel <- "announce <message>  - Send announcement to all clients"
-	logChannel <- "status             - Show server status"
-	logChannel <- "clients, list      - Show connected clients"
-	logChannel <- "kick <username>    - Disconnect a user"
-	logChannel <- "stats             - Show server statistics"
-	logChannel <- "files             - Show uploaded files"
-	logChannel <- "db <cmd> [args]   - Database operations (list|get|delete)"
-	logChannel <- "help              - Show this help"
-	logChannel <- "quit, exit        - Shutdown server"
+	logChannel <- "=== Admin Commands ===\n"
+	logChannel <- "announce <message>  - Send announcement to all clients\n"
+	logChannel <- "status             - Show server status\n"
+	logChannel <- "clients, list      - Show connected clients\n"
+	logChannel <- "kick <username>    - Disconnect a user\n"
+	logChannel <- "stats             - Show server statistics\n"
+	logChannel <- "files             - Show uploaded files\n"
+	logChannel <- "db <cmd> [args]   - Database operations (list|get|delete)\n"
+	logChannel <- "help              - Show this help\n"
+	logChannel <- "quit, exit        - Shutdown server\n"
 }
 
 func gracefulShutdown() {
@@ -1690,9 +1690,9 @@ func gracefulShutdown() {
 
 	select {
 	case <-done:
-		logChannel <- "Graceful shutdown complete"
+		logChannel <- "Graceful shutdown complete\n"
 	case <-time.After(5 * time.Second):
-		logChannel <- "Shutdown timeout reached, forcing exit"
+		logChannel <- "Shutdown timeout reached, forcing exit\n"
 	}
 
 	os.Exit(0)

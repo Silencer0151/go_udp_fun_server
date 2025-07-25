@@ -297,6 +297,12 @@ func (c *Client) handleServerMessages() {
 			// lastServerActivity timestamp just by receiving the packet.
 			// We do nothing here to keep the console clean for the user.
 			break
+			//Handle disconnect command from server (kick)
+		case CMD_DISCONNECT:
+			fmt.Printf("\r❌ You have been disconnected from the server.\n")
+			fmt.Printf("Reason: You were kicked by an administrator.\n")
+			close(c.quitChan)
+			return
 
 		default:
 			// If a function is waiting for a direct response, send it there.
