@@ -17,7 +17,6 @@
 
 /*
 	-- TODO LIST --
-	- Message history (last 10 or so messages sent to new user)
 	- Chat rooms (create, leave, set topic)
 	- Basic user authentication (hashed password on a simple db)
 		- User persistence, username/pw db
@@ -84,7 +83,7 @@ const (
 	CMD_FILE_DOWNLOAD_ACK   byte = 0x46
 	CMD_FILE_DELETE         byte = 0x47
 
-	// New Encryption Handshake Commands
+	// End-To-End Encryption Handshake Commands
 	CMD_KEY_EXCHANGE byte = 0x17 // Exchange public keys
 	CMD_KEY_CONFIRM  byte = 0x18 // Confirm encryption is ready
 
@@ -140,6 +139,17 @@ type FileDownloadSession struct {
 	Done         chan bool   // Signal completion
 	Mutex        sync.Mutex
 }
+
+type HistoryMessage struct {
+	Timestamp time.Time
+	Username  string
+	Message   string
+}
+
+var messageHistory []HistoryMessage
+var historyMutex = &sync.Mutex{}
+
+const MAX_HISTORY_SIZE = 8
 
 var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
 var downloadSessionsMutex = &sync.Mutex{}
@@ -358,8 +368,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		return
 	}
 
-	// This code is refactored from the original to ensure 'client' is in scope
-	// for all operations, which is necessary for the secureWriteToUDP function.
+	// ensure 'client' is in scope for all operations
 	addrStr := addr.String()
 	clientsMutex.Lock()
 	client, isKnown := clients[addrStr]
@@ -407,7 +416,7 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			return
 		}
 
-		if len(username) > 50 { // Add reasonable length limit
+		if len(username) > 50 {
 			secureWriteToUDP(conn, []byte("Error: Username too long (max 50 characters)."), addr, &client)
 			return
 		}
@@ -431,6 +440,13 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			secureWriteToUDP(conn, []byte("Username set successfully!"), addr, &client)
 
 			if oldUsername == "" {
+				// This is a new user joining - send them history first
+				history := getHistoryForNewUser()
+				if history != "" {
+					secureWriteToUDP(conn, []byte(history), addr, &client)
+					time.Sleep(100 * time.Millisecond) // Small delay to ensure history is received first
+				}
+
 				joinMsg := fmt.Sprintf("[Server]: Welcome, %s has joined!", username)
 				// Broadcast the join message
 				for clientAddr, otherClient := range clients {
@@ -476,8 +492,12 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			return
 		}
 
-		messageToBroadcast := fmt.Sprintf("[%s]: %s", sender.Username, string(payload))
-		logChannel <- fmt.Sprintf("Broadcasting from %s: %s\n", sender.Username, string(payload))
+		message := string(payload)
+		messageToBroadcast := fmt.Sprintf("[%s]: %s", sender.Username, message)
+		logChannel <- fmt.Sprintf("Broadcasting from %s: %s\n", sender.Username, message)
+
+		// Add to history BEFORE broadcasting
+		addToHistory(sender.Username, message)
 
 		for _, otherClient := range clients {
 			if otherClient.Addr.String() == addrStr || !otherClient.IsConnected {
@@ -1024,7 +1044,7 @@ func sendFileToClient(conn *net.UDPConn, addr *net.UDPAddr, filename string) {
 	for session.WindowStart < totalChunks {
 		session.Mutex.Lock()
 
-		// NEW: Only send packets to fill the window, don't blast them all at once.
+		// Only send packets to fill the window, don't blast them all at once.
 		// This loop ensures that we've attempted to send every packet up to the
 		// edge of our sliding window.
 		for session.WindowEnd < totalChunks && (session.WindowEnd-session.WindowStart) < session.WindowSize {
@@ -1323,6 +1343,48 @@ func trimTrailingNewline(s string) string {
 	return s
 }
 
+// addToHistory adds a message to the broadcast history
+func addToHistory(username, message string) {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	historyMsg := HistoryMessage{
+		Timestamp: time.Now(),
+		Username:  username,
+		Message:   message,
+	}
+
+	// Add to the end
+	messageHistory = append(messageHistory, historyMsg)
+
+	// Remove oldest if we exceed max size
+	if len(messageHistory) > MAX_HISTORY_SIZE {
+		messageHistory = messageHistory[1:] // Remove first element
+	}
+}
+
+// getHistoryForNewUser returns formatted history for new users
+func getHistoryForNewUser() string {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	if len(messageHistory) == 0 {
+		return ""
+	}
+
+	var historyLines []string
+	historyLines = append(historyLines, "--- Recent Messages ---")
+
+	for _, msg := range messageHistory {
+		timeStr := msg.Timestamp.Format("15:04:05")
+		formatted := fmt.Sprintf("[%s] %s: %s", timeStr, msg.Username, msg.Message)
+		historyLines = append(historyLines, formatted)
+	}
+
+	historyLines = append(historyLines, "--- End History ---")
+	return strings.Join(historyLines, "\n")
+}
+
 func sendServerHeartbeats(conn *net.UDPConn) {
 	defer wg.Done()
 	//send heartebeat every 15 seconds
@@ -1455,6 +1517,12 @@ func executeREPLCommand(conn *net.UDPConn, command string, args []string) {
 		} else {
 			logChannel <- "Usage: db <list|get|set|delete> [key] [value]\n"
 		}
+
+	case "history":
+		showMessageHistory()
+
+	case "clearhistory":
+		clearMessageHistory()
 
 	case "help":
 		showREPLHelp()
@@ -1666,9 +1734,34 @@ func showREPLHelp() {
 	logChannel <- "kick <username>    - Disconnect a user\n"
 	logChannel <- "stats             - Show server statistics\n"
 	logChannel <- "files             - Show uploaded files\n"
+	logChannel <- "history			 - Display message history\n"
+	logChannel <- "clearhistory		 - Clear message history\n"
 	logChannel <- "db <cmd> [args]   - Database operations (list|get|delete)\n"
 	logChannel <- "help              - Show this help\n"
 	logChannel <- "quit, exit        - Shutdown server\n"
+}
+
+func showMessageHistory() {
+	historyMutex.Lock()
+	defer historyMutex.Unlock()
+
+	if len(messageHistory) == 0 {
+		logChannel <- "No message history available\n"
+		return
+	}
+
+	logChannel <- "=== Message History ===\n"
+	for i, msg := range messageHistory {
+		timeStr := msg.Timestamp.Format("15:04:05")
+		logChannel <- fmt.Sprintf("%d. [%s] %s: %s\n", i+1, timeStr, msg.Username, msg.Message)
+	}
+}
+
+func clearMessageHistory() {
+	historyMutex.Lock()
+	messageHistory = nil
+	historyMutex.Unlock()
+	logChannel <- "Message history cleared\n"
 }
 
 func gracefulShutdown() {

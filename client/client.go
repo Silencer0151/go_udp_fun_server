@@ -323,7 +323,11 @@ func (c *Client) handleServerMessages() {
 // handleUserInput reads from stdin and sends commands or messages to the server.
 func (c *Client) handleUserInput() {
 	reader := bufio.NewReader(os.Stdin)
+
+	// Wait a moment for initial server responses to be processed
+	time.Sleep(200 * time.Millisecond)
 	fmt.Print("> ")
+
 	for {
 		text, _ := reader.ReadString('\n')
 		text = strings.TrimSpace(text)
