@@ -1,6 +1,6 @@
 // GUFS: Go UDP Fun Server
 // Author: derrybm/silencer0151
-// Version: 0.9.5
+// Version: 0.9.6
 //
 // Description:
 // A concurrent, stateful UDP server designed for learning and experimentation.
@@ -41,7 +41,7 @@ import (
 
 // Define command constants
 const (
-	SERVER_VERSION = "GUFS v0.9.5"
+	SERVER_VERSION = "GUFS v0.9.6"
 
 	// General Commands
 	CMD_BROADCAST           byte = 0x02
