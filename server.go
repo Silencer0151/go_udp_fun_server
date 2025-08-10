@@ -17,9 +17,54 @@
 
 /*
 	-- TODO LIST --
+	for 1.0:
+	- Fun interactive commands
+		/roll 2d6 - Roll dice
+		/8ball <question> - Magic 8-ball responses
+		/ascii <text> - Return ASCII art text
+		/weather <city> - Quick weather lookup (using your web fetch)
+		/joke - Random programming joke
+
+	- Improve message history
+		increase to 20-50
+		add /history <n> command
+		add timestamps to display history
+
+	- rate limiting/flood protection
+		basic token bucket per client
+		spam/DOS prevention
+		clean and automatic while invisible to good users
+
+	- Server stats command
+		Total messages sent
+		Most active user
+		Largest file transferred
+		Server record for concurrent users
+		Fun ASCII graph of activity
+
+	- Polish what's here
+		Better error messages
+		Improve the help text
+		Add colored output to client (only if possible with powershell/bash)
+		Maybe add a simple config file for server (motd.txt for a welcome message?)
+
+	mid term v1.5 goals:
 	- Chat rooms (create, leave, set topic)
-	- Basic user authentication (hashed password on a simple db)
-		- User persistence, username/pw db
+		/create #gaming
+		/join #gaming
+		/leave #gaming
+		/rooms (list all rooms)
+
+	- Simple Presence System
+		/away <message>  - Set away status
+		/back           - Clear away status
+
+	- GUFS playground mode interactive mode where users can:
+		See the raw bytes being sent/received
+		Craft custom packets
+		Learn the protocol interactively
+		Perfect for the educational aspect
+
 */
 
 package main
