@@ -151,6 +151,8 @@ type Client struct {
 	LastHeartbeat time.Time
 	EncMgr        *security.EncryptionManager
 	IsEncrypted   bool
+	TokenBucket   int       //current tokens availabale
+	LastTokenTime time.Time // Last time tokens were added
 }
 
 var clients = make(map[string]Client)
@@ -194,7 +196,7 @@ type HistoryMessage struct {
 var messageHistory []HistoryMessage
 var historyMutex = &sync.Mutex{}
 
-const MAX_HISTORY_SIZE = 8
+const MAX_HISTORY_SIZE = 20
 
 var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
 var downloadSessionsMutex = &sync.Mutex{}
@@ -204,6 +206,15 @@ var replShutdown = make(chan struct{})
 var wg sync.WaitGroup
 var shutdownOnce sync.Once
 var replShutdownOnce sync.Once
+
+// rate limiting
+const (
+	MAX_TOKENS         = 30  // Maximum tokens in bucket
+	TOKENS_PER_SECOND  = 5   // Token refill rate
+	TOKENS_PER_MESSAGE = 1   // Cost per normal message
+	TOKENS_PER_FILE    = 5   // Cost per file operation
+	BURST_THRESHOLD    = 100 // Messages per minute to trigger burst protection
+)
 
 func main() {
 
