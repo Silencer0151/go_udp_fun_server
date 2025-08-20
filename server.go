@@ -196,7 +196,7 @@ type HistoryMessage struct {
 var messageHistory []HistoryMessage
 var historyMutex = &sync.Mutex{}
 
-const MAX_HISTORY_SIZE = 35
+const MAX_HISTORY_SIZE = 30
 
 var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
 var downloadSessionsMutex = &sync.Mutex{}
