@@ -31,4 +31,7 @@ echo "Client build successful."
 
 echo
 echo "Build complete. Executables are in the 'build' directory."
+<<<<<<< HEAD
 
+=======
+>>>>>>> b375e8cc4c3b6f353a474585b484f016dd192239
