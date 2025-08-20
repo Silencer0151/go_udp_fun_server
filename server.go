@@ -404,7 +404,7 @@ Example: /username Alice
 /msg <username> <message> Direct message user connected to the server.
 
 [Fun]
-/dice		       Roll dice in rpg fashion (/roll 2d6)
+/roll		       Roll dice in rpg fashion (/roll 2d6)
 
 [Server Info]
 /help                  Show this help message.
