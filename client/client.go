@@ -27,6 +27,9 @@ const (
 	CMD_LIST_USERS          byte = 0x08
 	CMD_PRIVATE_MSG         byte = 0x09
 	CMD_SERVER_ANNOUNCEMENT byte = 0x50
+	
+	// Fun
+	CMD_ROLL_DICE		byte = 0x23
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -389,6 +392,8 @@ func (c *Client) handleUserInput() {
 				} else {
 					fmt.Println("Usage: /msg <username> <message>")
 				}
+			case "/roll":
+				c.sendCommand(CMD_ROLL_DICE, []byte(strings.Join(args, " ")))
 			case "/store":
 				c.sendCommand(CMD_DB_STORE, []byte(strings.Join(args, " ")))
 			case "/retrieve":

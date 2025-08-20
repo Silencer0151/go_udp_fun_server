@@ -82,6 +82,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"gufs/internal/fun"
 )
 
 // Define command constants
@@ -98,6 +99,9 @@ const (
 	CMD_LIST_USERS          byte = 0x08
 	CMD_PRIVATE_MSG         byte = 0x09
 	CMD_SERVER_ANNOUNCEMENT byte = 0x50
+
+	// Fun commands
+	CMD_ROLL_DICE	byte = 0x23
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -349,6 +353,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x17 | CMD_KEY_EXCHANGE  | []byte(publicKey)
 0x18 | CMD_KEY_CONFIRM   | (no payload)
 0x19 | CMD_SERVER_HEARTBEAT | (no payload)
+0x23 | CMD_ROLL_DICE	 | (string(message))
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 0x47 | CMD_FILE_DELETE   | (no payload) 
@@ -397,6 +402,9 @@ Example: /username Alice
 /echo <message>        Server repeats a message back to you.
 /users                 Server sends list of connected client usernames.
 /msg <username> <message> Direct message user connected to the server.
+
+[Fun]
+/dice		       Roll dice in rpg fashion (/roll 2d6)
 
 [Server Info]
 /help                  Show this help message.
@@ -907,7 +915,21 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 	case CMD_HELP:
 		secureWriteToUDP(conn, []byte(getHelpText()), addr, &client)
+	case CMD_ROLL_DICE:
+		clientsMutex.Lock()
+		defer clientsMutex.Unlock()	
 
+		diceExpr := string(payload)
+		result, _ := fun.RollDice(diceExpr)
+		
+		for clientAddr, otherClient := range clients {
+			if clientAddr != addrStr && otherClient.IsConnected {
+				secureWriteToUDP(conn, []byte(result), otherClient.Addr, &otherClient)
+			}
+		}
+		
+		client := clients[addrStr]
+		secureWriteToUDP(conn, []byte(""+result), client.Addr, &client)
 	case CMD_KEY_EXCHANGE:
 		clientsMutex.Lock()
 		clientForKey, ok := clients[addrStr]
