@@ -196,7 +196,7 @@ type HistoryMessage struct {
 var messageHistory []HistoryMessage
 var historyMutex = &sync.Mutex{}
 
-const MAX_HISTORY_SIZE = 20
+const MAX_HISTORY_SIZE = 35
 
 var downloadSessions = make(map[string]*FileDownloadSession) // key: clientAddr + filename
 var downloadSessionsMutex = &sync.Mutex{}
@@ -1790,8 +1790,8 @@ func showREPLHelp() {
 	logChannel <- "kick <username>    - Disconnect a user\n"
 	logChannel <- "stats             - Show server statistics\n"
 	logChannel <- "files             - Show uploaded files\n"
-	logChannel <- "history			 - Display message history\n"
-	logChannel <- "clearhistory		 - Clear message history\n"
+	logChannel <- "history		 - Display message history\n"
+	logChannel <- "clearhistory	 - Clear message history\n"
 	logChannel <- "db <cmd> [args]   - Database operations (list|get|delete)\n"
 	logChannel <- "help              - Show this help\n"
 	logChannel <- "quit, exit        - Shutdown server\n"
