@@ -19,7 +19,6 @@
 	-- TODO LIST --
 	for 1.0:
 	- Fun interactive commands
-		/roll 2d6 - Roll dice
 		/8ball <question> - Magic 8-ball responses
 		/ascii <text> - Return ASCII art text
 		/weather <city> - Quick weather lookup (using your web fetch)
