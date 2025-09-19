@@ -224,6 +224,7 @@ func main() {
 	// Handle CLI flags
 	ip := flag.String("ip", "127.0.0.1", "The IP address to bind the server to.")
 	port := flag.String("port", "8080", "The port to listen on.")
+	noREPL := flag.Bool("no-repl", false, "Disable the interactive admin REPL (for running as a service).")
 	flag.Parse()
 
 	//LOGGING
@@ -250,13 +251,18 @@ func main() {
 	}
 	defer conn.Close()
 
-	//REPL
-	wg.Add(1)
-	go startREPL(conn)
+	// Conditionally start the REPL
+	if !*noREPL {
+		wg.Add(1) // Only add to waitgroup if REPL is running
+		go startREPL(conn)
+		logChannel <- fmt.Sprintf("UDP server listening on %s (Admin REPL enabled)\n", conn.LocalAddr().String())
+	} else {
+		logChannel <- fmt.Sprintf("UDP server listening on %s (Admin REPL disabled)\n", conn.LocalAddr().String())
+	}
 
-	logChannel <- fmt.Sprintf("UDP server listening on %s\n", conn.LocalAddr().String())
+	//logChannel <- fmt.Sprintf("UDP server listening on %s\n", conn.LocalAddr().String())
 
-	wg.Add(4) // REPL + 3 background go routines
+	wg.Add(3) // REPL + 3 background go routines
 	// Start the client cleanup goroutine
 	go cleanupDeadClients(conn)
 	// cleanup download sessions
