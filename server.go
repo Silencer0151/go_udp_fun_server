@@ -74,6 +74,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"gufs/internal/fun"
 	"gufs/internal/security"
 	"net"
 	"os"
@@ -81,7 +82,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"gufs/internal/fun"
 )
 
 // Define command constants
@@ -100,7 +100,7 @@ const (
 	CMD_SERVER_ANNOUNCEMENT byte = 0x50
 
 	// Fun commands
-	CMD_ROLL_DICE	byte = 0x23
+	CMD_ROLL_DICE byte = 0x23
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -450,11 +450,14 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 	command := data[0]
 	payload := data[1:]
 
-	// Allow connection commands to pass through
-	isConnectCmd := command == CMD_CONNECT_SYN || command == CMD_CONNECT_ACK
+	// Allow connection and handshake commands to pass through before the client is fully "connected"
+	isHandshakeCmd := command == CMD_CONNECT_SYN ||
+		command == CMD_CONNECT_ACK ||
+		command == CMD_KEY_EXCHANGE ||
+		command == CMD_KEY_CONFIRM
 
-	// If the command is not a connection command and the client is not connected, reject it.
-	if !isConnectCmd && (!isKnown || !client.IsConnected) {
+	// If the command is not part of the handshake and the client is not connected, reject it.
+	if !isHandshakeCmd && (!isKnown || !client.IsConnected) {
 		secureWriteToUDP(conn, []byte("The server did not understand your request, try 'protocol' for more information."), addr, &client)
 		logChannel <- fmt.Sprintf("Rejected command from unconnected client %s - '%s'\n", addr, string(data))
 		return
@@ -916,17 +919,17 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		secureWriteToUDP(conn, []byte(getHelpText()), addr, &client)
 	case CMD_ROLL_DICE:
 		clientsMutex.Lock()
-		defer clientsMutex.Unlock()	
+		defer clientsMutex.Unlock()
 
 		diceExpr := string(payload)
 		result, _ := fun.RollDice(diceExpr)
-		
+
 		for clientAddr, otherClient := range clients {
 			if clientAddr != addrStr && otherClient.IsConnected {
 				secureWriteToUDP(conn, []byte(result), otherClient.Addr, &otherClient)
 			}
 		}
-		
+
 		client := clients[addrStr]
 		secureWriteToUDP(conn, []byte(""+result), client.Addr, &client)
 	case CMD_KEY_EXCHANGE:

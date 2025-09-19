@@ -27,9 +27,9 @@ const (
 	CMD_LIST_USERS          byte = 0x08
 	CMD_PRIVATE_MSG         byte = 0x09
 	CMD_SERVER_ANNOUNCEMENT byte = 0x50
-	
+
 	// Fun
-	CMD_ROLL_DICE		byte = 0x23
+	CMD_ROLL_DICE byte = 0x23
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -752,6 +752,17 @@ func (c *Client) sendAndReceive(cmd byte, payload []byte, timeout time.Duration)
 	}()
 
 	packet := append([]byte{cmd}, payload...)
+
+	// Encrypt the packet before sending
+	if c.isEncrypted && c.encMgr != nil && c.encMgr.IsReady() {
+		encrypted, err := c.encMgr.Encrypt(packet)
+		if err != nil {
+			// Don't send if encryption fails
+			return nil, fmt.Errorf("failed to encrypt packet for sendAndReceive: %w", err)
+		}
+		packet = encrypted
+	}
+
 	_, err := c.conn.Write(packet)
 	if err != nil {
 		return nil, err
