@@ -375,7 +375,7 @@ func (c *Client) handleUserInput() {
 					fmt.Println("Usage: /username <new_name>")
 				}
 			case "/users":
-				c.sendCommand(CMD_LIST_USERS, []byte(strings.Join(args, " ")))
+				c.sendCommand(CMD_LIST_USERS, nil) //send nothing other than command byte
 			case "/echo":
 				c.sendCommand(CMD_ECHO, []byte(strings.Join(args, " ")))
 			case "/reverse":
