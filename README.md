@@ -199,6 +199,8 @@ GUFS uses a custom binary protocol over UDP. All packets begin with a single com
 | `0x20` | DB_STORE | `string(key=value)` | Store key-value pair |
 | `0x21` | DB_RETRIEVE | `string(key)` | Retrieve value by key |
 | `0x22` | DB_LIST | None | List all database keys |
+| `0x23` | CMD_ROLL_DICE	 | `(string(message))` | Return random dice roll |
+| `0x24` | CMD_EIGHT_BALL	 | `(string(message))` | Return 8 ball message |
 | `0x30` | VERSION | None | Get server version |
 | `0x31` | HELP | None | Get command help text |
 | `0x40` | FILE_START | `[4B chunks][filename]` | Initiate file upload |

@@ -100,7 +100,8 @@ const (
 	CMD_SERVER_ANNOUNCEMENT byte = 0x50
 
 	// Fun commands
-	CMD_ROLL_DICE byte = 0x23
+	CMD_ROLL_DICE  byte = 0x23
+	CMD_EIGHT_BALL byte = 0x24
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -359,6 +360,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x18 | CMD_KEY_CONFIRM   | (no payload)
 0x19 | CMD_SERVER_HEARTBEAT | (no payload)
 0x23 | CMD_ROLL_DICE	 | (string(message))
+0x24 | CMD_EIGHT_BALL	 | (string(message))
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 0x47 | CMD_FILE_DELETE   | (no payload) 
@@ -410,6 +412,7 @@ Example: /username Alice
 
 [Fun]
 /roll		       Roll dice in rpg fashion (/roll 2d6)
+/8ball <question>  Ask the magic 8-ball a question
 
 [Server Info]
 /help                  Show this help message.
@@ -928,16 +931,47 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 		defer clientsMutex.Unlock()
 
 		diceExpr := string(payload)
-		result, _ := fun.RollDice(diceExpr)
+		sender := clients[addrStr]
 
-		for clientAddr, otherClient := range clients {
-			if clientAddr != addrStr && otherClient.IsConnected {
-				secureWriteToUDP(conn, []byte(result), otherClient.Addr, &otherClient)
+		announcement := fmt.Sprintf("%s is rolling the dice: %s", sender.Username, diceExpr)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the action to everyone
+				secureWriteToUDP(conn, []byte(announcement), client.Addr, &client)
 			}
 		}
 
-		client := clients[addrStr]
-		secureWriteToUDP(conn, []byte(""+result), client.Addr, &client)
+		result, _ := fun.RollDice(diceExpr)
+		resultMessage := fmt.Sprintf("🎲 The result is: %s", result)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the result to everyone
+				secureWriteToUDP(conn, []byte(resultMessage), client.Addr, &client)
+			}
+		}
+	case CMD_EIGHT_BALL:
+		clientsMutex.Lock()
+		defer clientsMutex.Unlock()
+
+		question := string(payload)
+		sender := clients[addrStr]
+
+		announcement := fmt.Sprintf("%s asks the Magic 8-Ball: \"%s\"", sender.Username, question)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the action to everyone
+				secureWriteToUDP(conn, []byte(announcement), client.Addr, &client)
+			}
+		}
+
+		result := fun.EightBall(question)
+		resultMessage := fmt.Sprintf("🎱 The Magic 8-Ball says: %s", result)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the result to everyone
+				secureWriteToUDP(conn, []byte(resultMessage), client.Addr, &client)
+			}
+		}
 	case CMD_KEY_EXCHANGE:
 		clientsMutex.Lock()
 		clientForKey, ok := clients[addrStr]
