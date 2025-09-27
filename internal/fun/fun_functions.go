@@ -68,6 +68,9 @@ func EightBall(input string) string {
 		"Better not tell you now",
 		"Cannot predict now",
 		"Concentrate and ask again",
+		"Is what it is",
+		"Happens to the best of us",
+		"Comes with the territory",
 
 		// Negative
 		"Don't count on it",
@@ -75,6 +78,7 @@ func EightBall(input string) string {
 		"My sources say no",
 		"Outlook not so good",
 		"Very doubtful",
+		"Unlucky",
 	}
 
 	randomIndex := rand.Intn(len(responses))
