@@ -325,6 +325,22 @@ func main() {
 	}
 }
 
+func getWelcomeBanner() string {
+	banner := `
+********************************
+   ______ __  __ ______ _____
+  / ____// / / // ____// ___/
+ / / __ / / / // /_    \__ \ 
+/ /_/ // /_/ // __/   ___/ / 
+\____/ \____//_/     /____/  
+********************************
+  	Welcome to GUFS!
+    Type '/help' for commands
+********************************
+`
+	return strings.TrimSpace(banner)
+}
+
 // this is for potential nc users who may want to view the protocol without a "client"
 func getProtocolText() string {
 	return `
@@ -1003,13 +1019,24 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 
 	case CMD_KEY_CONFIRM:
 		clientsMutex.Lock()
-		if clientToConfirm, ok := clients[addrStr]; ok && clientToConfirm.EncMgr != nil && clientToConfirm.EncMgr.IsReady() {
-			clientToConfirm.IsEncrypted = true
-			clients[addrStr] = clientToConfirm
-			logChannel <- fmt.Sprintf("Encryption enabled for client %s\n", addrStr)
-			conn.WriteToUDP([]byte{CMD_KEY_CONFIRM}, addr) // UNENCRYPTED - this is handshake confirmation
+		// Get a copy of the client struct for use after unlocking the mutex.
+		clientToConfirm, ok := clients[addrStr]
+		if !ok || clientToConfirm.EncMgr == nil || !clientToConfirm.EncMgr.IsReady() {
+			clientsMutex.Unlock() // Always unlock before returning.
+			return
 		}
+
+		// Update the shared state in the map.
+		clientToConfirm.IsEncrypted = true
+		clients[addrStr] = clientToConfirm
+		logChannel <- fmt.Sprintf("Encryption enabled for client %s\n", addrStr)
+
+		// Release the global lock before performing network I/O.
 		clientsMutex.Unlock()
+
+		conn.WriteToUDP([]byte{CMD_KEY_CONFIRM}, addr) // UNENCRYPTED - this is handshake confirmation
+		banner := getWelcomeBanner()
+		secureWriteToUDP(conn, []byte(banner), addr, &clientToConfirm)
 
 	case CMD_CONNECT_SYN:
 		logChannel <- fmt.Sprintf("Received SYN from %s, sending SYN-ACK\n", addrStr)

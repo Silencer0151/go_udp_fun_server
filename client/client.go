@@ -328,9 +328,9 @@ func (c *Client) handleServerMessages() {
 func (c *Client) handleUserInput() {
 	reader := bufio.NewReader(os.Stdin)
 
-	// Wait a moment for initial server responses to be processed
-	time.Sleep(200 * time.Millisecond)
-	fmt.Print("> ")
+	// Wait a brief moment for initial server messages
+	//time.Sleep(300 * time.Millisecond)
+	//fmt.Print("> ")
 
 	for {
 		text, _ := reader.ReadString('\n')
@@ -429,6 +429,7 @@ func (c *Client) handleUserInput() {
 		} else {
 			c.sendCommand(CMD_BROADCAST, []byte(text))
 		}
+		time.Sleep(100 * time.Millisecond)
 		fmt.Print("> ")
 	}
 }
