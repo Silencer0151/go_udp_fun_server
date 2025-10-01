@@ -19,15 +19,9 @@
 	-- TODO LIST --
 	for 1.0:
 	- Fun interactive commands
-		/8ball <question> - Magic 8-ball responses
 		/ascii <text> - Return ASCII art text
 		/weather <city> - Quick weather lookup (using your web fetch)
 		/joke - Random programming joke
-
-	- Improve message history
-		increase to 20-50
-		add /history <n> command
-		add timestamps to display history
 
 	- rate limiting/flood protection
 		basic token bucket per client
