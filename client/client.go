@@ -295,7 +295,7 @@ func (c *Client) handleServerMessages() {
 				c.downloadMutex.Unlock()
 			}
 		case CMD_SERVER_ANNOUNCEMENT:
-			fmt.Printf("\r[SERVER ANNOUNCEMENT]: %s\n> ", string(payload))
+			fmt.Printf("\r[SERVER ANNOUNCEMENT]: %s\n", string(payload))
 		case CMD_SERVER_HEARTBEAT:
 			// This is the server's liveness check. We've already updated the
 			// lastServerActivity timestamp just by receiving the packet.
@@ -329,7 +329,7 @@ func (c *Client) handleUserInput() {
 	reader := bufio.NewReader(os.Stdin)
 
 	// Wait a brief moment for initial server messages
-	//time.Sleep(300 * time.Millisecond)
+	//time.Sleep(500 * time.Millisecond)
 	//fmt.Print("> ")
 
 	for {
@@ -428,9 +428,10 @@ func (c *Client) handleUserInput() {
 			}
 		} else {
 			c.sendCommand(CMD_BROADCAST, []byte(text))
+			fmt.Print("> ")
 		}
-		time.Sleep(100 * time.Millisecond)
-		fmt.Print("> ")
+		//time.Sleep(100 * time.Millisecond)
+		//fmt.Print("> ")
 	}
 }
 
