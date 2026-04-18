@@ -31,6 +31,7 @@ const (
 	// Fun
 	CMD_ROLL_DICE  byte = 0x23
 	CMD_EIGHT_BALL byte = 0x24
+	CMD_COIN_FLIP  byte = 0x25
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -397,6 +398,8 @@ func (c *Client) handleUserInput() {
 				c.sendCommand(CMD_ROLL_DICE, []byte(strings.Join(args, " ")))
 			case "/8ball":
 				c.sendCommand(CMD_EIGHT_BALL, []byte(strings.Join(args, " ")))
+			case "/flip":
+				c.sendCommand(CMD_COIN_FLIP, nil)
 			case "/store":
 				c.sendCommand(CMD_DB_STORE, []byte(strings.Join(args, " ")))
 			case "/retrieve":

@@ -85,3 +85,11 @@ func EightBall(input string) string {
 
 	return fmt.Sprintf("Magic 8-Ball says: %s", responses[randomIndex])
 }
+
+func CoinFlip() string {
+	fmt.Println("CoinFlip")
+	//time.Now().UnixNano()
+	outcomes := []string{"Heads", "Tails"}
+	randomIndex := rand.Intn(len(outcomes))
+	return fmt.Sprintf("%s", outcomes[randomIndex])
+}

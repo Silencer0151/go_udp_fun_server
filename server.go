@@ -96,6 +96,7 @@ const (
 	// Fun commands
 	CMD_ROLL_DICE  byte = 0x23
 	CMD_EIGHT_BALL byte = 0x24
+	CMD_COIN_FLIP  byte = 0x25
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -371,6 +372,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x19 | CMD_SERVER_HEARTBEAT | (no payload)
 0x23 | CMD_ROLL_DICE	 | (string(message))
 0x24 | CMD_EIGHT_BALL	 | (string(message))
+0x25 | CMD_COIN_FLIP	 | (no payload)
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 0x47 | CMD_FILE_DELETE   | (no payload) 
@@ -423,6 +425,7 @@ Example: /username Alice
 [Fun]
 /roll		       Roll dice in rpg fashion (/roll 2d6)
 /8ball <question>  Ask the magic 8-ball a question
+/flip                 Flip a coin
 
 [Server Info]
 /help                  Show this help message.
@@ -982,6 +985,29 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 				secureWriteToUDP(conn, []byte(resultMessage), client.Addr, &client)
 			}
 		}
+	case CMD_COIN_FLIP:
+		clientsMutex.Lock()
+		//defer clientsMutex.Unlock() - we will unlock manually after getting the sender to minimize time spent holding the lock
+		sender := clients[addrStr]
+		clientsMutex.Unlock()
+
+		announcement := fmt.Sprintf("%s flips a coin.", sender.Username)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the action to everyone
+				secureWriteToUDP(conn, []byte(announcement), client.Addr, &client)
+			}
+		}
+
+		result := fun.CoinFlip()
+		resultMessage := fmt.Sprintf("🪙 The result is: %s", result)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the result to everyone
+				secureWriteToUDP(conn, []byte(resultMessage), client.Addr, &client)
+			}
+		}
+
 	case CMD_KEY_EXCHANGE:
 		clientsMutex.Lock()
 		clientForKey, ok := clients[addrStr]
