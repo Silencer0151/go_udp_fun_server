@@ -32,6 +32,7 @@ const (
 	CMD_ROLL_DICE  byte = 0x23
 	CMD_EIGHT_BALL byte = 0x24
 	CMD_COIN_FLIP  byte = 0x25
+	CMD_ASCII_ART  byte = 0x26
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -400,6 +401,12 @@ func (c *Client) handleUserInput() {
 				c.sendCommand(CMD_EIGHT_BALL, []byte(strings.Join(args, " ")))
 			case "/flip":
 				c.sendCommand(CMD_COIN_FLIP, nil)
+			case "/ascii":
+				if len(args) > 0 {
+					c.sendCommand(CMD_ASCII_ART, []byte(strings.Join(args, " ")))
+				} else {
+					fmt.Println("Usage: /ascii <text>")
+				}
 			case "/store":
 				c.sendCommand(CMD_DB_STORE, []byte(strings.Join(args, " ")))
 			case "/retrieve":

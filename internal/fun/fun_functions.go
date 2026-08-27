@@ -93,3 +93,89 @@ func CoinFlip() string {
 	randomIndex := rand.Intn(len(outcomes))
 	return fmt.Sprintf("%s", outcomes[randomIndex])
 }
+
+const asciiArtMaxLen = 20
+
+// 5-row-tall bitmap font. Each glyph is a fixed-width block of '#'/' ' rows.
+var asciiFont = map[rune][5]string{
+	'A': {" ### ", "#   #", "#####", "#   #", "#   #"},
+	'B': {"#### ", "#   #", "#### ", "#   #", "#### "},
+	'C': {" ####", "#    ", "#    ", "#    ", " ####"},
+	'D': {"#### ", "#   #", "#   #", "#   #", "#### "},
+	'E': {"#####", "#    ", "#### ", "#    ", "#####"},
+	'F': {"#####", "#    ", "#### ", "#    ", "#    "},
+	'G': {" ####", "#    ", "#  ##", "#   #", " ####"},
+	'H': {"#   #", "#   #", "#####", "#   #", "#   #"},
+	'I': {"#####", "  #  ", "  #  ", "  #  ", "#####"},
+	'J': {"  ###", "   # ", "   # ", "#  # ", " ##  "},
+	'K': {"#   #", "#  # ", "###  ", "#  # ", "#   #"},
+	'L': {"#    ", "#    ", "#    ", "#    ", "#####"},
+	'M': {"#   #", "## ##", "# # #", "#   #", "#   #"},
+	'N': {"#   #", "##  #", "# # #", "#  ##", "#   #"},
+	'O': {" ### ", "#   #", "#   #", "#   #", " ### "},
+	'P': {"#### ", "#   #", "#### ", "#    ", "#    "},
+	'Q': {" ### ", "#   #", "#   #", "#  # ", " ## #"},
+	'R': {"#### ", "#   #", "#### ", "#  # ", "#   #"},
+	'S': {" ####", "#    ", " ### ", "    #", "#### "},
+	'T': {"#####", "  #  ", "  #  ", "  #  ", "  #  "},
+	'U': {"#   #", "#   #", "#   #", "#   #", " ### "},
+	'V': {"#   #", "#   #", "#   #", " # # ", "  #  "},
+	'W': {"#   #", "#   #", "# # #", "## ##", "#   #"},
+	'X': {"#   #", " # # ", "  #  ", " # # ", "#   #"},
+	'Y': {"#   #", " # # ", "  #  ", "  #  ", "  #  "},
+	'Z': {"#####", "   # ", "  #  ", " #   ", "#####"},
+	'0': {" ### ", "#   #", "#   #", "#   #", " ### "},
+	'1': {"  #  ", " ##  ", "  #  ", "  #  ", "#####"},
+	'2': {" ### ", "#   #", "  ## ", " #   ", "#####"},
+	'3': {"#### ", "    #", " ### ", "    #", "#### "},
+	'4': {"#  # ", "#  # ", "#####", "   # ", "   # "},
+	'5': {"#####", "#    ", "#### ", "    #", "#### "},
+	'6': {" ####", "#    ", "#### ", "#   #", " ### "},
+	'7': {"#####", "    #", "   # ", "  #  ", "  #  "},
+	'8': {" ### ", "#   #", " ### ", "#   #", " ### "},
+	'9': {" ### ", "#   #", " ####", "    #", " ### "},
+	' ': {"   ", "   ", "   ", "   ", "   "},
+	'!': {" # ", " # ", " # ", "   ", " # "},
+	'?': {" ### ", "#   #", "  ## ", "     ", "  #  "},
+	'.': {"   ", "   ", "   ", "   ", " # "},
+	',': {"   ", "   ", "   ", " # ", "#  "},
+	'-': {"     ", "     ", "#####", "     ", "     "},
+}
+
+var asciiUnknownGlyph = [5]string{"#####", "#   #", "# # #", "#   #", "#####"}
+
+// AsciiArt renders input as large block-letter text using a built-in bitmap font.
+func AsciiArt(input string) (string, bool) {
+	fmt.Println("AsciiArt: ", input)
+
+	text := strings.TrimSpace(input)
+	if text == "" {
+		return "Error: Usage /ascii <text>", false
+	}
+	if len(text) > asciiArtMaxLen {
+		return fmt.Sprintf("Error: Text too long (max %d characters).", asciiArtMaxLen), false
+	}
+
+	text = strings.ToUpper(text)
+
+	var lines [5]strings.Builder
+	for i, r := range text {
+		glyph, ok := asciiFont[r]
+		if !ok {
+			glyph = asciiUnknownGlyph
+		}
+		for row := 0; row < 5; row++ {
+			if i > 0 {
+				lines[row].WriteByte(' ')
+			}
+			lines[row].WriteString(glyph[row])
+		}
+	}
+
+	result := make([]string, 5)
+	for row := 0; row < 5; row++ {
+		result[row] = lines[row].String()
+	}
+
+	return strings.Join(result, "\n"), true
+}

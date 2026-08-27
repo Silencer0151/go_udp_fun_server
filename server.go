@@ -17,9 +17,11 @@
 
 /*
 	-- TODO LIST --
+	Magic 8 ball double message issue
+	ex:
+	🎱 The Magic 8-Ball says: Magic 8-Ball says: Without a doubt
 	for 1.0:
 	- Fun interactive commands
-		/ascii <text> - Return ASCII art text
 		/weather <city> - Quick weather lookup (using your web fetch)
 		/joke - Random programming joke
 
@@ -97,6 +99,7 @@ const (
 	CMD_ROLL_DICE  byte = 0x23
 	CMD_EIGHT_BALL byte = 0x24
 	CMD_COIN_FLIP  byte = 0x25
+	CMD_ASCII_ART  byte = 0x26
 
 	// Connection Protocol
 	CMD_CONNECT_SYN      byte = 0x10
@@ -373,6 +376,7 @@ Payload formats are specified below. Full documentation: https://github.com/Sile
 0x23 | CMD_ROLL_DICE	 | (string(message))
 0x24 | CMD_EIGHT_BALL	 | (string(message))
 0x25 | CMD_COIN_FLIP	 | (no payload)
+0x26 | CMD_ASCII_ART	 | (string(text to render))
 0x30 | VERSION           | (no payload)
 0x31 | HELP              | (no payload) - Returns REPL client help.
 0x47 | CMD_FILE_DELETE   | (no payload) 
@@ -426,6 +430,7 @@ Example: /username Alice
 /roll		       Roll dice in rpg fashion (/roll 2d6)
 /8ball <question>  Ask the magic 8-ball a question
 /flip                 Flip a coin
+/ascii <text>          Return ASCII art text
 
 [Server Info]
 /help                  Show this help message.
@@ -1005,6 +1010,38 @@ func handlePacket(conn *net.UDPConn, addr *net.UDPAddr, data []byte) {
 			if client.IsConnected {
 				// Broadcast the result to everyone
 				secureWriteToUDP(conn, []byte(resultMessage), client.Addr, &client)
+			}
+		}
+
+	case CMD_ASCII_ART:
+		text := string(payload)
+
+		result, ok := fun.AsciiArt(text)
+		if !ok {
+			// Validation error (empty/too long) - only tell the requester.
+			clientsMutex.Lock()
+			sender := clients[addrStr]
+			clientsMutex.Unlock()
+			secureWriteToUDP(conn, []byte(result), addr, &sender)
+			return
+		}
+
+		clientsMutex.Lock()
+		defer clientsMutex.Unlock()
+
+		sender := clients[addrStr]
+		announcement := fmt.Sprintf("%s renders some ASCII art: \"%s\"", sender.Username, text)
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the action to everyone
+				secureWriteToUDP(conn, []byte(announcement), client.Addr, &client)
+			}
+		}
+
+		for _, client := range clients {
+			if client.IsConnected {
+				// Broadcast the result to everyone
+				secureWriteToUDP(conn, []byte(result), client.Addr, &client)
 			}
 		}
 
